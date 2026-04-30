@@ -1,6 +1,6 @@
 # POH Pre-Call Brief — Agentforce Prompt Template + Apex
 
-This repo contains the Apex classes and Prompt Template that power the **pre-call planning brief** for the P&G Professional Oral Health (POH) Agentforce pilot. The implementation partner can use this as the reference for building the grounded Prompt Template in the customer's production org.
+This repo contains the Apex classes and Prompt Template that power the **pre-call planning brief** for a Professional Oral Health (POH) Agentforce implementation. The implementation partner can use this as the reference for building the grounded Prompt Template in the customer's production org.
 
 ---
 
