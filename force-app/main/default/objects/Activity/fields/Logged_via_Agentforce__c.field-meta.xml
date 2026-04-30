@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-    <fullName>Logged_via_Agentforce__c</fullName>
-    <description>Set to true when this activity was created by the POH Sales Agent Post_Call_Logger. Used for success-metrics reporting.</description>
-    <defaultValue>false</defaultValue>
-    <externalId>false</externalId>
-    <label>Logged via Agentforce</label>
-    <type>Checkbox</type>
-</CustomField>

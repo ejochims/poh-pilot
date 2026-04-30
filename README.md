@@ -1,136 +1,141 @@
-# POH Sales Agent — Agentforce Pilot
+# POH Pre-Call Brief — Agentforce Prompt Template + Apex
 
-An Agentforce Employee Agent for P&G Professional Oral Health (POH) sales representatives. The agent lives on the Account record page and does two things:
-
-1. **Pre-Call Planning** — generates a complete, grounded account brief in a single AI call before a dental practice visit
-2. **Post-Call Logging** — lets reps log a completed visit via natural language (or Siri dictation), parsing the narrative and writing back to Salesforce
+This repo contains the Apex classes and Prompt Template that power the **pre-call planning brief** for the P&G Professional Oral Health (POH) Agentforce pilot. The implementation partner can use this as the reference for building the grounded Prompt Template in the customer's production org.
 
 ---
 
-## Architecture
+## What This Does
 
-### Pre-Call Planning — Grounded Prompt Template
+When a sales rep asks the Agentforce agent to brief them on a dental practice account, the agent calls the `POH_Pre_Call_Brief` Prompt Template. The template uses `POHPreCallBriefData` as an **Apex data provider** — meaning Salesforce fetches live account data *before* the LLM generates a single word. The LLM then synthesizes everything into one clean, grounded brief with no hallucination risk.
 
-The pre-call brief is powered by a **Flex Prompt Template with an Apex data provider**. When the rep says "brief me," the agent makes one call to the `POH_Pre_Call_Brief` prompt template. The template internally runs the `POHPreCallBriefData` Apex class to fetch all account data from Salesforce before the LLM ever generates a word. This means:
-
-- The LLM only synthesizes — it never guesses or fabricates
-- The full brief returns in a single conversational turn
-- No multi-step back-and-forth between the agent and Apex
+The full call chain looks like this:
 
 ```
-Rep: "Brief me"
-  └─► Agent calls generatePromptResponse://POH_Pre_Call_Brief
-        └─► Prompt Template runs POHPreCallBriefData (Apex data provider)
-              ├─► POHGetAccountBrief     → practice profile
-              ├─► POHGetVisitHistory     → 12-month visit history
-              ├─► POHGetOrderHistory     → orders + ship plan
-              └─► POHGetSamplingHistory  → iO sample history
-        └─► LLM synthesizes one grounded brief
-  └─► Rep sees complete brief
+Agent calls generatePromptResponse://POH_Pre_Call_Brief
+  └─► POH_Pre_Call_Brief (Flex Prompt Template)
+        └─► POHPreCallBriefData (Apex data provider — runs inside the template)
+              ├─► POHGetAccountBrief     — practice name, address, specialty, DDS/RDH counts,
+              │                             dispensing/recommending status, competitor brands,
+              │                             last iO sample date, AI Sales Companion recommendation
+              ├─► POHGetVisitHistory     — all Events in past 12 months, last visit details,
+              │                             attendees, notes, samples left
+              ├─► POHGetOrderHistory     — all Order_Item__c records past 12 months + future
+              │                             ship plan, grouped by product family
+              └─► POHGetSamplingHistory  — sample drops past 24 months, last iO sample date,
+                                           staleness flag if > 2 years
+        └─► LLM synthesizes one grounded brief using only the fetched data
 ```
 
-### Post-Call Logging
+---
 
-The agent accepts a free-form narrative ("Today I visited from 2–2:30, saw Megan and Julie, left 12 tubes of Crest Gum Detoxify, they want a Teach and Learn"), extracts the structured data using slot-filling, confirms with the rep, and then writes back to Salesforce.
+## Files
+
+```
+apex/
+  POHPreCallBriefData.cls       The data provider. Registered in the Prompt Template as a
+                                templateDataProvider. Calls the four fetchers below and returns
+                                everything as a single structured string.
+
+  POHGetAccountBrief.cls        Fetches the Account record fields — specialty, DDS/RDH counts,
+                                dispensing/recommending flags, competitor brands, last iO sample
+                                date, and AI Sales Companion recommendation text.
+
+  POHGetVisitHistory.cls        Queries all Events on the Account within a lookback window
+                                (default 365 days). Resolves attendee names from both the primary
+                                WhoId contact and EventRelation invitees. No row cap.
+
+  POHGetOrderHistory.cls        Queries all Order_Item__c records on the Account for the past
+                                12 months and any future ship plan orders. Groups totals by
+                                product family and ship plan type.
+
+  POHGetSamplingHistory.cls     Queries Order_Item__c records where Ship_Plan_Type__c =
+                                'Sample Drop' for the past 24 months. Flags the last Oral-B iO
+                                sample date and marks it stale if over 2 years ago.
+
+prompt-template/
+  POH_Pre_Call_Brief.genAiPromptTemplate-meta.xml
+                                The Flex Prompt Template metadata. Takes accountId as input,
+                                calls POHPreCallBriefData via templateDataProviders, and
+                                instructs the LLM to write a structured pre-call brief using
+                                only the grounded data.
+```
 
 ---
 
-## Apex Classes
+## Key Implementation Notes for the Partner
 
-### Data Provider (Prompt Template Grounding)
+### 1. Custom Object Dependency
 
-#### `POHPreCallBriefData`
-The **consolidated data provider** for the `POH_Pre_Call_Brief` prompt template. This is the class registered as a `templateDataProvider` inside the Flex template XML. When the template executes, Salesforce calls this class with the `accountId`, it fetches all four data sections by calling the individual fetcher classes below, and returns everything as a single structured string that the LLM uses as grounding context.
+`POHGetOrderHistory` and `POHGetSamplingHistory` query a custom object called `Order_Item__c`. You will need to create this object (or map to whatever equivalent exists in the customer's org) with these fields:
 
-- **Input:** `accountId` (Salesforce Account ID)
-- **Output:** `Prompt` (structured text block with all four data sections)
-- **Called by:** `POH_Pre_Call_Brief` prompt template — not called directly by the agent
+| Field | Type | Notes |
+|-------|------|-------|
+| `Account__c` | Lookup(Account) | Links the order to the account |
+| `Product__c` | Lookup(Product2) | The product ordered |
+| `Product_Name__c` | Text | Denormalized product name for display |
+| `Product_Family__c` | Text | Product family (e.g., Power, Manual, Paste) |
+| `Quantity__c` | Number | Units ordered |
+| `Order_Date__c` | Date | Date of the order or ship plan delivery |
+| `Ship_Plan_Type__c` | Picklist | Manual Ship Plan, Auto Ship Plan, Sample Drop, One-Time |
+| `Is_Future_Order__c` | Checkbox | True for upcoming ship plan orders |
 
----
+If the customer already tracks orders differently, update the SOQL in `POHGetOrderHistory.cls` and `POHGetSamplingHistory.cls` to match their schema.
 
-### Individual Data Fetchers (also usable as standalone agent actions)
+### 2. Account Custom Fields
 
-Each of these classes is an `@InvocableMethod` — callable both as a direct agent action and from `POHPreCallBriefData`.
+`POHGetAccountBrief` reads several custom fields on Account:
 
-#### `POHGetAccountBrief`
-Fetches the practice profile from the Account record.
-- Returns: practice name, billing address, specialty, DDS count, RDH count, dispensing/recommending status (Power and Manual), competitor brands seen, last iO sample date, and the AI Sales Companion recommendation field
+| Field | Type |
+|-------|------|
+| `Practice_Specialty__c` | Text |
+| `Number_of_DDS__c` | Number |
+| `Number_of_RDH__c` | Number |
+| `Dispenses_Power__c` | Checkbox |
+| `Dispenses_Manual__c` | Checkbox |
+| `Recommends_Power__c` | Checkbox |
+| `Recommends_Manual__c` | Checkbox |
+| `Competitor_Brands_Seen__c` | Text |
+| `Last_iO_Sample_Date__c` | Date |
+| `AI_Sales_Companion_Recommendation__c` | Long Text |
 
-#### `POHGetVisitHistory`
-Returns all Events linked to the Account within a configurable lookback window (default 365 days). No row cap — returns every visit.
-- Returns: total visit count, most recent visit details (date, duration, attendees pulled from WhoId and EventRelation, notes, samples left), and a summary of all previous visits
-- Attendees are resolved by joining both the primary `WhoId` contact and any additional `EventRelation` invitees
+Update the field API names in `POHGetAccountBrief.cls` if the customer uses different names.
 
-#### `POHGetOrderHistory`
-Returns all `Order_Item__c` records for the Account covering the past 12 months and any future ship plan orders.
-- Returns: past orders grouped by product family and ship plan type with unit totals, ship plan type detection, and a line-by-line list of upcoming ship plan orders
-- Flags accounts with no active ship plan as a potential recommendation opportunity
+### 3. Deployment Order
 
-#### `POHGetSamplingHistory`
-Returns `Order_Item__c` records where `Ship_Plan_Type__c = 'Sample Drop'` for the past 24 months.
-- Returns: chronological list of sample drops by product and quantity, last Oral-B iO sample date, and a staleness flag if the last iO sample was more than 2 years ago (with a recommendation to re-sample)
+The Prompt Template has a hard dependency on the Apex data provider class. Always deploy in this order:
 
----
+```
+1. Deploy all Apex classes
+2. Deploy the Prompt Template
+3. Wire the Prompt Template as an action in your agent
+```
 
-### Post-Call Write Actions
+### 4. Wiring the Prompt Template as an Agent Action
 
-#### `POHFindContactsByName`
-Looks up contacts on the Account by first name. Handles duplicates by selecting the most recently modified contact and surfacing both to the rep for confirmation.
-- Input: comma-separated first names, Account ID
-- Output: resolved Contact IDs, human-readable summary with duplicate warnings
+In your agent's pre-call topic, define the action like this:
 
-#### `POHLogVisitEvent`
-Creates a Salesforce Event for the completed visit. Links contacts via `EventRelation`, populates `Visit_Notes__c` and `Samples_Left_Summary__c`, and sets `Logged_via_Agentforce__c = true`. Requires rep confirmation before executing.
-- Input: Account ID, contact IDs, start/end datetime, subject, notes, samples summary
-- Output: Event ID, success flag, confirmation message
+```
+actions:
+    get_pre_call_brief:
+        description: "Generates a complete pre-call account brief. Call this when the rep
+                       asks to be briefed, prepped, or wants an account summary."
+        inputs:
+            "Input:accountId": string
+                description: "Salesforce Account ID of the target practice"
+                is_required: True
+        outputs:
+            promptResponse: string
+                is_used_by_planner: True
+                is_displayable: True
+        target: "generatePromptResponse://POH_Pre_Call_Brief"
+```
 
-#### `POHLogSamplesLeft`
-Creates `Order_Item__c` records with `Ship_Plan_Type__c = 'Sample Drop'` for each product and quantity mentioned by the rep. Updates `Last_iO_Sample_Date__c` on the Account if an Oral-B iO product was dropped.
-- Input: Account ID, natural language samples summary, visit date
-- Output: confirmation of what was logged
+The `Input:accountId` naming convention is required — Prompt Template inputs are always referenced as `Input:<fieldApiName>` in Agent Script.
 
-#### `POHUpdateAccountAttributes`
-Updates Account custom fields the rep explicitly observed during the visit: dispensing/recommending status, DDS/RDH counts, competitor brands.
-- Input: Account ID + any combination of the 7 optional attribute fields
-- Output: summary of what was updated
+### 5. Prompt Template Version Identifier
 
-#### `POHGetAllContacts`
-Returns every contact on the Account with no row cap. Used when the rep asks to see who is at a practice before a visit.
-- Input: Account ID
-- Output: full contact list (name, title, phone, email, last modified date), total count, duplicate first-name flags
-
----
-
-## Key Metadata
-
-| File | What it is |
-|------|-----------|
-| `force-app/main/default/genAiPromptTemplates/POH_Pre_Call_Brief.genAiPromptTemplate-meta.xml` | Flex Prompt Template with Apex grounding |
-| `force-app/main/default/aiAuthoringBundles/POH_Sales_Agent/POH_Sales_Agent.agent` | Agent Script defining all topics and actions |
-| `force-app/main/default/objects/Order_Item__c/` | Custom object representing orders and sample drops |
-| `force-app/main/default/objects/Account/fields/` | Custom fields added to Account (specialty, DDS/RDH counts, dispensing flags, etc.) |
-| `force-app/main/default/flows/POH_Create_Followup_Task.flow-meta.xml` | Flow action for creating follow-up Tasks |
-| `scripts/apex/seed_poh_data.apex` | Seeds the Omega Inc demo account with products, contacts, events, and order items |
-
----
-
-## Deployment
+The `versionIdentifier` and `activeVersionIdentifier` in the XML must be a Base64-encoded SHA-256 hash followed by `_1`. If you redeploy or modify the template, generate a new one:
 
 ```bash
-# Authenticate to your org
-sf org login web --alias my-org --set-default
-
-# Deploy schema and Apex first
-sf project deploy start --source-dir force-app/main/default/objects
-sf project deploy start --source-dir force-app/main/default/classes
-
-# Deploy the Prompt Template (requires Apex to exist first)
-sf project deploy start --source-dir force-app/main/default/genAiPromptTemplates
-
-# Deploy the agent and remaining metadata
-sf project deploy start --source-dir force-app/main/default
-
-# Publish and activate the agent
-sf agent publish authoring-bundle -n POH_Sales_Agent
-sf agent activate -n POH_Sales_Agent --version 1
+python3 -c "import base64, hashlib; h = hashlib.sha256(b'your-unique-string').digest(); print(base64.b64encode(h).decode() + '_1')"
 ```
