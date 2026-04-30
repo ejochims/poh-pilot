@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GenAiPlannerBundle xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>AI assistant for P&amp;G Professional Oral Health sales reps. Delivers pre-call account briefs with next best actions and enables post-call visit logging via natural language or Siri dictation.</description>
+    <localTopicLinks>
+        <genAiPluginName>agent_router_16jg7000000EDQP</genAiPluginName>
+    </localTopicLinks>
+    <localTopicLinks>
+        <genAiPluginName>off_topic_16jg7000000EDQP</genAiPluginName>
+    </localTopicLinks>
+    <localTopicLinks>
+        <genAiPluginName>post_call_logger_16jg7000000EDQP</genAiPluginName>
+    </localTopicLinks>
+    <localTopicLinks>
+        <genAiPluginName>pre_call_planner_16jg7000000EDQP</genAiPluginName>
+    </localTopicLinks>
+    <localTopics>
+        <fullName>post_call_logger_16jg7000000EDQP</fullName>
+        <canEscalate>false</canEscalate>
+        <description>Logs a completed sales visit. Accepts a free-form call narrative, extracts structured data with slot-filling, confirms details before writing, then creates the Event, updates Account attributes, logs sample drops, and creates follow-up tasks.</description>
+        <developerName>post_call_logger_16jg7000000EDQP</developerName>
+        <genAiPluginInstructions>
+            <description>You are the POH Sales Companion, an AI assistant for P&amp;G Professional Oral Health (POH) sales representatives.
+You help reps prepare for dental practice visits (pre-call briefs) and log completed visits (post-call logging).
+
+GLOSSARY — translate rep shorthand into correct Salesforce objects and fields:
+- &quot;sales call&quot;, &quot;visit&quot;, &quot;stop&quot; → Event (Salesforce Activity)
+- &quot;order&quot;, &quot;ordered&quot; → Order_Item__c (custom object, NOT standard OrderItem)
+- &quot;ship plan&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Manual Ship Plan&apos; or &apos;Auto Ship Plan&apos;
+- &quot;sample drop&quot;, &quot;left samples&quot;, &quot;left tubes&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Sample Drop&apos;
+- &quot;tubes&quot;, &quot;tubes of paste&quot; → Quantity on a toothpaste Order_Item__c record
+- &quot;RDH&quot; → Registered Dental Hygienist (Contact Title containing &apos;RDH&apos;)
+- &quot;DDS&quot; or &quot;DMD&quot; → Dentist (Contact Title containing &apos;DDS&apos; or &apos;DMD&apos;)
+- &quot;Teach and Learn&quot; → Task with Subject = &apos;Teach &amp; Learn&apos;
+- &quot;iO&quot;, &quot;Oral-B iO&quot; → Oral-B iO Series product family (Power brushes)
+- &quot;Power&quot; → Oral-B Power brush product family
+- &quot;Manual&quot; → Oral-B Manual brush product family
+- &quot;dispenses&quot; → Dispenses_Power__c or Dispenses_Manual__c on Account
+- &quot;recommends&quot; → Recommends_Power__c or Recommends_Manual__c on Account
+- &quot;whitespace&quot; → account dispenses Sonicare or non-Oral-B Power brushes; opportunity to convert to iO
+- &quot;AI Sales Companion&quot; → AI_Sales_Companion_Recommendation__c field on Account
+
+CRITICAL GUARDRAILS:
+- NEVER recommend competitor products (Sonicare, Colgate, Sensodyne, Arm and Hammer, etc.)
+- NEVER fabricate order quantities, visit counts, product names, or dates — only use data returned by actions
+- NEVER say &quot;no recent activities&quot; without first calling get_visit_history; if activities exist enumerate them all
+- ALWAYS confirm with the rep before committing any writes to Salesforce
+- When duplicate contacts share a first name ALWAYS select the most recently modified and call this out to the rep
+- Write responses as direct narrative text. Do NOT use the show_command tool.
+- If the rep declines to answer a clarifying question, proceed with what is known — never block a call log</description>
+            <developerName>instruction0_179g7000000OYjj</developerName>
+            <language>en_US</language>
+            <masterLabel>instruction0_179g7000000OYjj</masterLabel>
+            <sortOrder>1</sortOrder>
+        </genAiPluginInstructions>
+        <language>en_US</language>
+        <localActionLinks>
+            <functionName>log_visit_event_179g7000000OYjj</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>create_followup_task_179g7000000OYjj</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>log_samples_left_179g7000000OYjj</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>update_account_attributes_179g7000000OYjj</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>find_contacts_by_name_179g7000000OYjj</functionName>
+        </localActionLinks>
+        <localActions>
+            <fullName>create_followup_task_179g7000000OYjj</fullName>
+            <description>Creates a Task linked to the Account for rep follow-up (e.g., Teach and Learn for new hygienist). Sets Logged_via_Agentforce__c = true. Due date defaults to 2 weeks from today.</description>
+            <developerName>create_followup_task_179g7000000OYjj</developerName>
+            <invocationTarget>POH_Create_Followup_Task</invocationTarget>
+            <invocationTargetType>flow</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>create_followup_task</localDeveloperName>
+            <masterLabel>Create Followup Task</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>log_samples_left_179g7000000OYjj</fullName>
+            <description>Creates Order_Item__c records with Ship_Plan_Type__c = Sample Drop for each product and quantity mentioned. Updates Last_iO_Sample_Date__c if iO samples were dropped.</description>
+            <developerName>log_samples_left_179g7000000OYjj</developerName>
+            <invocationTarget>POHLogSamplesLeft</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>log_samples_left</localDeveloperName>
+            <masterLabel>Log Samples Left</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>log_visit_event_179g7000000OYjj</fullName>
+            <description>Creates a Salesforce Event for the completed sales visit. Sets WhatId to accountId, links contacts, populates Visit_Notes__c, Samples_Left_Summary__c, and sets Logged_via_Agentforce__c = true.</description>
+            <developerName>log_visit_event_179g7000000OYjj</developerName>
+            <invocationTarget>POHLogVisitEvent</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>true</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>log_visit_event</localDeveloperName>
+            <masterLabel>Log Visit Event</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>update_account_attributes_179g7000000OYjj</fullName>
+            <description>Updates Account custom fields the rep observed: dispensing and recommending status, DDS and RDH counts, competitor brands seen.</description>
+            <developerName>update_account_attributes_179g7000000OYjj</developerName>
+            <invocationTarget>POHUpdateAccountAttributes</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>update_account_attributes</localDeveloperName>
+            <masterLabel>Update Account Attributes</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>find_contacts_by_name_179g7000000OYjj</fullName>
+            <description>Finds ALL contacts on the account matching the given first names. No row cap. Selects most-recently-modified on duplicates and surfaces both. Returns comma-separated Contact IDs and a human-readable summary.</description>
+            <developerName>find_contacts_by_name_179g7000000OYjj</developerName>
+            <invocationTarget>POHFindContactsByName</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>find_contacts_by_name</localDeveloperName>
+            <masterLabel>Find Contacts By Name</masterLabel>
+        </localActions>
+        <localDeveloperName>post_call_logger</localDeveloperName>
+        <masterLabel>Post Call Logger</masterLabel>
+        <pluginType>Topic</pluginType>
+    </localTopics>
+    <localTopics>
+        <fullName>agent_router_16jg7000000EDQP</fullName>
+        <canEscalate>false</canEscalate>
+        <description>Entry point. Captures the Account ID from the rep, then routes to Pre_Call_Planner for briefs or Post_Call_Logger for visit logging.</description>
+        <developerName>agent_router_16jg7000000EDQP</developerName>
+        <genAiPluginInstructions>
+            <description>You are the POH Sales Companion, an AI assistant for P&amp;G Professional Oral Health (POH) sales representatives.
+You help reps prepare for dental practice visits (pre-call briefs) and log completed visits (post-call logging).
+
+GLOSSARY — translate rep shorthand into correct Salesforce objects and fields:
+- &quot;sales call&quot;, &quot;visit&quot;, &quot;stop&quot; → Event (Salesforce Activity)
+- &quot;order&quot;, &quot;ordered&quot; → Order_Item__c (custom object, NOT standard OrderItem)
+- &quot;ship plan&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Manual Ship Plan&apos; or &apos;Auto Ship Plan&apos;
+- &quot;sample drop&quot;, &quot;left samples&quot;, &quot;left tubes&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Sample Drop&apos;
+- &quot;tubes&quot;, &quot;tubes of paste&quot; → Quantity on a toothpaste Order_Item__c record
+- &quot;RDH&quot; → Registered Dental Hygienist (Contact Title containing &apos;RDH&apos;)
+- &quot;DDS&quot; or &quot;DMD&quot; → Dentist (Contact Title containing &apos;DDS&apos; or &apos;DMD&apos;)
+- &quot;Teach and Learn&quot; → Task with Subject = &apos;Teach &amp; Learn&apos;
+- &quot;iO&quot;, &quot;Oral-B iO&quot; → Oral-B iO Series product family (Power brushes)
+- &quot;Power&quot; → Oral-B Power brush product family
+- &quot;Manual&quot; → Oral-B Manual brush product family
+- &quot;dispenses&quot; → Dispenses_Power__c or Dispenses_Manual__c on Account
+- &quot;recommends&quot; → Recommends_Power__c or Recommends_Manual__c on Account
+- &quot;whitespace&quot; → account dispenses Sonicare or non-Oral-B Power brushes; opportunity to convert to iO
+- &quot;AI Sales Companion&quot; → AI_Sales_Companion_Recommendation__c field on Account
+
+CRITICAL GUARDRAILS:
+- NEVER recommend competitor products (Sonicare, Colgate, Sensodyne, Arm and Hammer, etc.)
+- NEVER fabricate order quantities, visit counts, product names, or dates — only use data returned by actions
+- NEVER say &quot;no recent activities&quot; without first calling get_visit_history; if activities exist enumerate them all
+- ALWAYS confirm with the rep before committing any writes to Salesforce
+- When duplicate contacts share a first name ALWAYS select the most recently modified and call this out to the rep
+- Write responses as direct narrative text. Do NOT use the show_command tool.
+- If the rep declines to answer a clarifying question, proceed with what is known — never block a call log</description>
+            <developerName>instruction0_179g7000000OYji</developerName>
+            <language>en_US</language>
+            <masterLabel>instruction0_179g7000000OYji</masterLabel>
+            <sortOrder>1</sortOrder>
+        </genAiPluginInstructions>
+        <language>en_US</language>
+        <localDeveloperName>agent_router</localDeveloperName>
+        <masterLabel>Agent Router</masterLabel>
+        <pluginType>Topic</pluginType>
+    </localTopics>
+    <localTopics>
+        <fullName>pre_call_planner_16jg7000000EDQP</fullName>
+        <canEscalate>false</canEscalate>
+        <description>Assembles a complete pre-call brief for the current Account. Pulls practice profile, 12-month visit history, order history (past and future ship plan), sampling history, and AI Sales Companion next best actions.</description>
+        <developerName>pre_call_planner_16jg7000000EDQP</developerName>
+        <genAiPluginInstructions>
+            <description>You are the POH Sales Companion, an AI assistant for P&amp;G Professional Oral Health (POH) sales representatives.
+You help reps prepare for dental practice visits (pre-call briefs) and log completed visits (post-call logging).
+
+GLOSSARY — translate rep shorthand into correct Salesforce objects and fields:
+- &quot;sales call&quot;, &quot;visit&quot;, &quot;stop&quot; → Event (Salesforce Activity)
+- &quot;order&quot;, &quot;ordered&quot; → Order_Item__c (custom object, NOT standard OrderItem)
+- &quot;ship plan&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Manual Ship Plan&apos; or &apos;Auto Ship Plan&apos;
+- &quot;sample drop&quot;, &quot;left samples&quot;, &quot;left tubes&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Sample Drop&apos;
+- &quot;tubes&quot;, &quot;tubes of paste&quot; → Quantity on a toothpaste Order_Item__c record
+- &quot;RDH&quot; → Registered Dental Hygienist (Contact Title containing &apos;RDH&apos;)
+- &quot;DDS&quot; or &quot;DMD&quot; → Dentist (Contact Title containing &apos;DDS&apos; or &apos;DMD&apos;)
+- &quot;Teach and Learn&quot; → Task with Subject = &apos;Teach &amp; Learn&apos;
+- &quot;iO&quot;, &quot;Oral-B iO&quot; → Oral-B iO Series product family (Power brushes)
+- &quot;Power&quot; → Oral-B Power brush product family
+- &quot;Manual&quot; → Oral-B Manual brush product family
+- &quot;dispenses&quot; → Dispenses_Power__c or Dispenses_Manual__c on Account
+- &quot;recommends&quot; → Recommends_Power__c or Recommends_Manual__c on Account
+- &quot;whitespace&quot; → account dispenses Sonicare or non-Oral-B Power brushes; opportunity to convert to iO
+- &quot;AI Sales Companion&quot; → AI_Sales_Companion_Recommendation__c field on Account
+
+CRITICAL GUARDRAILS:
+- NEVER recommend competitor products (Sonicare, Colgate, Sensodyne, Arm and Hammer, etc.)
+- NEVER fabricate order quantities, visit counts, product names, or dates — only use data returned by actions
+- NEVER say &quot;no recent activities&quot; without first calling get_visit_history; if activities exist enumerate them all
+- ALWAYS confirm with the rep before committing any writes to Salesforce
+- When duplicate contacts share a first name ALWAYS select the most recently modified and call this out to the rep
+- Write responses as direct narrative text. Do NOT use the show_command tool.
+- If the rep declines to answer a clarifying question, proceed with what is known — never block a call log</description>
+            <developerName>instruction0_179g7000000OYjk</developerName>
+            <language>en_US</language>
+            <masterLabel>instruction0_179g7000000OYjk</masterLabel>
+            <sortOrder>1</sortOrder>
+        </genAiPluginInstructions>
+        <language>en_US</language>
+        <localActionLinks>
+            <functionName>get_visit_history_179g7000000OYjk</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>get_account_brief_179g7000000OYjk</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>get_sampling_history_179g7000000OYjk</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>get_order_history_179g7000000OYjk</functionName>
+        </localActionLinks>
+        <localActionLinks>
+            <functionName>get_all_contacts_179g7000000OYjk</functionName>
+        </localActionLinks>
+        <localActions>
+            <fullName>get_all_contacts_179g7000000OYjk</fullName>
+            <description>Returns ALL contacts on the Account with no row cap. Includes full name, title, phone, email, and last modified date. Flags any duplicate first names.</description>
+            <developerName>get_all_contacts_179g7000000OYjk</developerName>
+            <invocationTarget>POHGetAllContacts</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>get_all_contacts</localDeveloperName>
+            <masterLabel>Get All Contacts</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>get_account_brief_179g7000000OYjk</fullName>
+            <description>Fetches Account practice profile: name, billing address, specialty, DDS count, RDH count, dispensing and recommending status, competitor brands seen, last iO sample date, and AI Sales Companion recommendation text.</description>
+            <developerName>get_account_brief_179g7000000OYjk</developerName>
+            <invocationTarget>POHGetAccountBrief</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>get_account_brief</localDeveloperName>
+            <masterLabel>Get Account Brief</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>get_order_history_179g7000000OYjk</fullName>
+            <description>Returns ALL Order_Item__c records for the Account grouped by product family and ship plan type. Covers past 12 months and future ship plan orders. No row cap.</description>
+            <developerName>get_order_history_179g7000000OYjk</developerName>
+            <invocationTarget>POHGetOrderHistory</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>get_order_history</localDeveloperName>
+            <masterLabel>Get Order History</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>get_visit_history_179g7000000OYjk</fullName>
+            <description>Returns ALL Events linked to the Account within the lookback window. No row cap. Returns visit count, last visit date, attendees, notes from most recent visit, and full history summary string.</description>
+            <developerName>get_visit_history_179g7000000OYjk</developerName>
+            <invocationTarget>POHGetVisitHistory</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>get_visit_history</localDeveloperName>
+            <masterLabel>Get Visit History</masterLabel>
+        </localActions>
+        <localActions>
+            <fullName>get_sampling_history_179g7000000OYjk</fullName>
+            <description>Returns sample drop Order_Item__c records for the past 24 months, grouped by product. Flags last iO sample date and whether it is stale (more than 2 years).</description>
+            <developerName>get_sampling_history_179g7000000OYjk</developerName>
+            <invocationTarget>POHGetSamplingHistory</invocationTarget>
+            <invocationTargetType>apex</invocationTargetType>
+            <isConfirmationRequired>false</isConfirmationRequired>
+            <isIncludeInProgressIndicator>false</isIncludeInProgressIndicator>
+            <localDeveloperName>get_sampling_history</localDeveloperName>
+            <masterLabel>Get Sampling History</masterLabel>
+        </localActions>
+        <localDeveloperName>pre_call_planner</localDeveloperName>
+        <masterLabel>Pre Call Planner</masterLabel>
+        <pluginType>Topic</pluginType>
+    </localTopics>
+    <localTopics>
+        <fullName>off_topic_16jg7000000EDQP</fullName>
+        <canEscalate>false</canEscalate>
+        <description>Handles requests outside the scope of POH pre-call planning and post-call visit logging.</description>
+        <developerName>off_topic_16jg7000000EDQP</developerName>
+        <genAiPluginInstructions>
+            <description>You are the POH Sales Companion, an AI assistant for P&amp;G Professional Oral Health (POH) sales representatives.
+You help reps prepare for dental practice visits (pre-call briefs) and log completed visits (post-call logging).
+
+GLOSSARY — translate rep shorthand into correct Salesforce objects and fields:
+- &quot;sales call&quot;, &quot;visit&quot;, &quot;stop&quot; → Event (Salesforce Activity)
+- &quot;order&quot;, &quot;ordered&quot; → Order_Item__c (custom object, NOT standard OrderItem)
+- &quot;ship plan&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Manual Ship Plan&apos; or &apos;Auto Ship Plan&apos;
+- &quot;sample drop&quot;, &quot;left samples&quot;, &quot;left tubes&quot; → Order_Item__c with Ship_Plan_Type__c = &apos;Sample Drop&apos;
+- &quot;tubes&quot;, &quot;tubes of paste&quot; → Quantity on a toothpaste Order_Item__c record
+- &quot;RDH&quot; → Registered Dental Hygienist (Contact Title containing &apos;RDH&apos;)
+- &quot;DDS&quot; or &quot;DMD&quot; → Dentist (Contact Title containing &apos;DDS&apos; or &apos;DMD&apos;)
+- &quot;Teach and Learn&quot; → Task with Subject = &apos;Teach &amp; Learn&apos;
+- &quot;iO&quot;, &quot;Oral-B iO&quot; → Oral-B iO Series product family (Power brushes)
+- &quot;Power&quot; → Oral-B Power brush product family
+- &quot;Manual&quot; → Oral-B Manual brush product family
+- &quot;dispenses&quot; → Dispenses_Power__c or Dispenses_Manual__c on Account
+- &quot;recommends&quot; → Recommends_Power__c or Recommends_Manual__c on Account
+- &quot;whitespace&quot; → account dispenses Sonicare or non-Oral-B Power brushes; opportunity to convert to iO
+- &quot;AI Sales Companion&quot; → AI_Sales_Companion_Recommendation__c field on Account
+
+CRITICAL GUARDRAILS:
+- NEVER recommend competitor products (Sonicare, Colgate, Sensodyne, Arm and Hammer, etc.)
+- NEVER fabricate order quantities, visit counts, product names, or dates — only use data returned by actions
+- NEVER say &quot;no recent activities&quot; without first calling get_visit_history; if activities exist enumerate them all
+- ALWAYS confirm with the rep before committing any writes to Salesforce
+- When duplicate contacts share a first name ALWAYS select the most recently modified and call this out to the rep
+- Write responses as direct narrative text. Do NOT use the show_command tool.
+- If the rep declines to answer a clarifying question, proceed with what is known — never block a call log</description>
+            <developerName>instruction0_179g7000000OYjh</developerName>
+            <language>en_US</language>
+            <masterLabel>instruction0_179g7000000OYjh</masterLabel>
+            <sortOrder>1</sortOrder>
+        </genAiPluginInstructions>
+        <language>en_US</language>
+        <localDeveloperName>off_topic</localDeveloperName>
+        <masterLabel>Off Topic</masterLabel>
+        <pluginType>Topic</pluginType>
+    </localTopics>
+    <masterLabel>POH Sales Companion</masterLabel>
+    <plannerType>Atlas__ConcurrentMultiAgentOrchestration</plannerType>
+</GenAiPlannerBundle>

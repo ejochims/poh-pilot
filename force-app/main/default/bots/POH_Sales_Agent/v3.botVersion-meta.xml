@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BotVersion xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>v3</fullName>
+    <articleAnswersGPTEnabled>false</articleAnswersGPTEnabled>
+    <botDialogs>
+        <botSteps>
+            <botMessages>
+                <message>Hi! I&apos;m your POH Sales Companion. I can brief you on this account before your visit, or help you log a call you just made. What would you like to do?</message>
+                <messageIdentifier>0f8e450a-0b21-4b9b-b3cb-11fe93e5573b</messageIdentifier>
+            </botMessages>
+            <stepIdentifier>6aca0fa5-67da-4247-8389-4759e22beccd</stepIdentifier>
+            <type>Message</type>
+        </botSteps>
+        <botSteps>
+            <stepIdentifier>a230c034-6869-428f-9963-5b21a44f07d2</stepIdentifier>
+            <type>Wait</type>
+        </botSteps>
+        <developerName>Welcome</developerName>
+        <isPlaceholderDialog>false</isPlaceholderDialog>
+        <label>Welcome</label>
+        <showInFooterMenu>false</showInFooterMenu>
+    </botDialogs>
+    <botDialogs>
+        <botSteps>
+            <botMessages>
+                <message>Something went wrong on my end. Please try again or contact your admin if the issue persists.</message>
+                <messageIdentifier>3c524f41-37c6-4450-9097-ea43ed1b14b2</messageIdentifier>
+            </botMessages>
+            <stepIdentifier>ba282da9-8179-478e-a8be-125732b84e0f</stepIdentifier>
+            <type>Message</type>
+        </botSteps>
+        <botSteps>
+            <stepIdentifier>924d08d3-9c8f-412c-9b20-7183919503df</stepIdentifier>
+            <type>Wait</type>
+        </botSteps>
+        <developerName>Rich_Content_Error_Handling</developerName>
+        <isPlaceholderDialog>false</isPlaceholderDialog>
+        <label>Error Handler</label>
+        <showInFooterMenu>false</showInFooterMenu>
+    </botDialogs>
+    <botDialogs>
+        <developerName>Transfer_To_Agent</developerName>
+        <isPlaceholderDialog>false</isPlaceholderDialog>
+        <label>Transfer To Agent</label>
+        <showInFooterMenu>false</showInFooterMenu>
+    </botDialogs>
+    <citationsEnabled>false</citationsEnabled>
+    <conversationDefinitionPlanners>
+        <genAiPlannerName>POH_Sales_Agent_v3</genAiPlannerName>
+    </conversationDefinitionPlanners>
+    <conversationSystemDialogs>
+        <dialog>Rich_Content_Error_Handling</dialog>
+        <type>ErrorHandling</type>
+    </conversationSystemDialogs>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Salesforce Account ID from the current record page context. Populated automatically when agent is embedded on an Account Lightning Record Page.</description>
+        <developerName>account_id</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Account Id</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Display name of the current Account</description>
+        <developerName>account_name</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Account Name</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>The agent instructions</description>
+        <developerName>AgentScriptInternal_agent_instructions</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Agent Instructions</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Boolean</dataType>
+        <description>Runtime condition evaluation for if statements</description>
+        <developerName>AgentScriptInternal_condition</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Runtime Condition</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>The next topic to be visited</description>
+        <developerName>AgentScriptInternal_next_topic</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Next Topic</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Comma-separated Salesforce Contact IDs confirmed by the rep for the logged visit</description>
+        <developerName>confirmed_contact_ids</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Confirmed Contact Ids</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Salesforce Event ID created by log_visit</description>
+        <developerName>event_id</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Event Id</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Boolean</dataType>
+        <description>True after the visit Event has been successfully created in Salesforce</description>
+        <developerName>event_logged</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Event Logged</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Comma-separated first names of contacts the rep met, extracted from the narrative</description>
+        <developerName>parsed_contact_names</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Parsed Contact Names</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>ISO datetime string for the visit end time, extracted from the rep&apos;s narrative</description>
+        <developerName>parsed_end_time</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Parsed End Time</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Follow-up task description extracted from the narrative (e.g., Teach and Learn for new hygienist)</description>
+        <developerName>parsed_followup</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Parsed Followup</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Visit notes and key discussion points extracted from the narrative</description>
+        <developerName>parsed_notes</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Parsed Notes</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>Samples left summary extracted from the narrative (e.g., 12 tubes Crest Gum Detoxify)</description>
+        <developerName>parsed_samples</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Parsed Samples</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <conversationVariables>
+        <dataType>Text</dataType>
+        <description>ISO datetime string for the visit start time, extracted from the rep&apos;s narrative</description>
+        <developerName>parsed_start_time</developerName>
+        <includeInPrompt>false</includeInPrompt>
+        <label>Parsed Start Time</label>
+        <visibility>Internal</visibility>
+    </conversationVariables>
+    <copilotPrimaryLanguage>en_US</copilotPrimaryLanguage>
+    <defaultStdObjForContactIdFltrEnabled>false</defaultStdObjForContactIdFltrEnabled>
+    <entryDialog>Welcome</entryDialog>
+    <intentDisambiguationEnabled>false</intentDisambiguationEnabled>
+    <intentV3Enabled>false</intentV3Enabled>
+    <isScriptCompatibleAgent>true</isScriptCompatibleAgent>
+    <knowledgeActionEnabled>false</knowledgeActionEnabled>
+    <knowledgeFallbackEnabled>false</knowledgeFallbackEnabled>
+    <smallTalkEnabled>false</smallTalkEnabled>
+    <staticPromptsEnabled>false</staticPromptsEnabled>
+    <stopRecPrompts>false</stopRecPrompts>
+    <stopWelcomePrompts>false</stopWelcomePrompts>
+    <surfacesEnabled>false</surfacesEnabled>
+    <toneType>Casual</toneType>
+</BotVersion>

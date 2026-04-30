@@ -1,0 +1,22 @@
+{
+  "unevaluatedProperties" : false,
+  "properties" : {
+    "contactSummary" : {
+      "title" : "Contact Summary",
+      "description" : "Rep-readable summary of resolved contacts including any duplicate warnings",
+      "lightning:type" : "lightning__textType",
+      "lightning:isPII" : false,
+      "copilotAction:isDisplayable" : true,
+      "copilotAction:isUsedByPlanner" : true
+    },
+    "resolvedContactIds" : {
+      "title" : "Resolved Contact Ids",
+      "description" : "Comma-separated Contact IDs, one per first name (most recently modified wins on duplicates)",
+      "lightning:type" : "lightning__textType",
+      "lightning:isPII" : false,
+      "copilotAction:isDisplayable" : false,
+      "copilotAction:isUsedByPlanner" : true
+    }
+  },
+  "lightning:type" : "lightning__objectType"
+}

@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Flow xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>62.0</apiVersion>
+    <description>Creates a follow-up Task linked to an Account and optionally an Event. Sets Logged_via_Agentforce__c = true. Due date defaults to 14 days from today. Used by the POH Sales Companion agent post-call logger.</description>
+    <interviewLabel>POH Create Followup Task {!$Flow.CurrentDateTime}</interviewLabel>
+    <label>POH Create Followup Task</label>
+    <processMetadataValues>
+        <name>BuilderType</name>
+        <value>
+            <stringValue>LightningFlowBuilder</stringValue>
+        </value>
+    </processMetadataValues>
+    <processType>AutoLaunchedFlow</processType>
+    <start>
+        <locationX>50</locationX>
+        <locationY>50</locationY>
+        <connector>
+            <targetReference>Create_Followup_Task</targetReference>
+        </connector>
+    </start>
+    <status>Active</status>
+
+    <!-- ── Input Variables ── -->
+    <variables>
+        <name>accountId</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>true</isInput>
+        <isOutput>false</isOutput>
+        <description>Salesforce Account ID to link the task to.</description>
+    </variables>
+    <variables>
+        <name>taskSubject</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>true</isInput>
+        <isOutput>false</isOutput>
+        <description>Subject line of the Task (e.g., "Teach &amp; Learn for new hygienist").</description>
+    </variables>
+    <variables>
+        <name>relatedEventId</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>true</isInput>
+        <isOutput>false</isOutput>
+        <description>Optional: Salesforce Event ID to associate with this task.</description>
+    </variables>
+
+    <!-- ── Output Variables ── -->
+    <variables>
+        <name>taskConfirmation</name>
+        <dataType>String</dataType>
+        <isCollection>false</isCollection>
+        <isInput>false</isInput>
+        <isOutput>true</isOutput>
+        <description>Confirmation message returned to the agent after task creation.</description>
+    </variables>
+
+    <!-- ── Formulas ── -->
+    <formulas>
+        <name>DueDateFormula</name>
+        <dataType>Date</dataType>
+        <expression>TODAY() + 14</expression>
+    </formulas>
+    <formulas>
+        <name>ConfirmationFormula</name>
+        <dataType>String</dataType>
+        <expression>'Task created: ' &amp; {!taskSubject} &amp; ' - due ' &amp; TEXT({!DueDateFormula}) &amp; '. Logged_via_Agentforce__c = true.'</expression>
+    </formulas>
+
+    <!-- ── Create Task Record ── -->
+    <recordCreates>
+        <name>Create_Followup_Task</name>
+        <label>Create Follow-Up Task</label>
+        <locationX>200</locationX>
+        <locationY>200</locationY>
+        <connector>
+            <targetReference>Set_Confirmation</targetReference>
+        </connector>
+        <inputAssignments>
+            <field>Subject</field>
+            <value>
+                <elementReference>taskSubject</elementReference>
+            </value>
+        </inputAssignments>
+        <inputAssignments>
+            <field>WhatId</field>
+            <value>
+                <elementReference>accountId</elementReference>
+            </value>
+        </inputAssignments>
+        <inputAssignments>
+            <field>ActivityDate</field>
+            <value>
+                <elementReference>DueDateFormula</elementReference>
+            </value>
+        </inputAssignments>
+        <inputAssignments>
+            <field>Status</field>
+            <value>
+                <stringValue>Not Started</stringValue>
+            </value>
+        </inputAssignments>
+        <inputAssignments>
+            <field>Priority</field>
+            <value>
+                <stringValue>Normal</stringValue>
+            </value>
+        </inputAssignments>
+        <inputAssignments>
+            <field>Logged_via_Agentforce__c</field>
+            <value>
+                <booleanValue>true</booleanValue>
+            </value>
+        </inputAssignments>
+        <object>Task</object>
+        <storeOutputAutomatically>true</storeOutputAutomatically>
+    </recordCreates>
+
+    <!-- ── Set Confirmation Message ── -->
+    <assignments>
+        <name>Set_Confirmation</name>
+        <label>Set Confirmation Message</label>
+        <locationX>400</locationX>
+        <locationY>200</locationY>
+        <assignmentItems>
+            <assignToReference>taskConfirmation</assignToReference>
+            <operator>Assign</operator>
+            <value>
+                <elementReference>ConfirmationFormula</elementReference>
+            </value>
+        </assignmentItems>
+    </assignments>
+
+</Flow>

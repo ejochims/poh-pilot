@@ -1,0 +1,171 @@
+# POH Sales Companion — AiEvaluationDefinition-Compatible Test Spec
+# Usage:
+#   sf agent test create --spec specs/POH_Sales_Agent-evalSpec.yaml \
+#                        --api-name POH_Sales_Agent_Tests \
+#                        --target-org POHDemo
+#   sf agent test run --api-name POH_Sales_Agent_Tests --wait 15 \
+#                     --result-format json --target-org POHDemo
+
+name: "POH Sales Companion Tests"
+subjectType: AGENT
+subjectName: POH_Sales_Agent
+
+testCases:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # LAYER 1 — ACCEPTANCE: ROUTING
+  # ═══════════════════════════════════════════════════════════════════
+
+  - utterance: "Brief me on this account"
+    expectedTopic: pre_call_planner
+    expectedOutcome: "Agent delivers a pre-call brief with practice profile, visit history, order history, sampling, and recommended next best action. Response is narrative prose."
+
+  - utterance: "Prep me for my visit"
+    expectedTopic: pre_call_planner
+    expectedOutcome: "Agent correctly interprets 'prep me' as a pre-call brief request."
+
+  - utterance: "What do I know about this account?"
+    expectedTopic: pre_call_planner
+    expectedOutcome: "Agent routes to pre_call_planner and provides account summary."
+
+  - utterance: "Today I visited this account from 2:10 to 2:30 PM and I saw Megan and Julie."
+    expectedTopic: post_call_logger
+    expectedOutcome: "Agent correctly routes post-call narrative to post_call_logger and begins extracting structured data."
+
+  - utterance: "Log my call"
+    expectedTopic: post_call_logger
+    expectedOutcome: "Agent asks rep to provide call narrative for logging."
+
+  - utterance: "I just got back from a visit"
+    expectedTopic: post_call_logger
+    expectedOutcome: "Agent routes to post_call_logger and prompts for call details."
+
+  - utterance: "What's the weather today?"
+    expectedTopic: off_topic
+    expectedOutcome: "Agent declines off-topic request and redirects to pre-call or post-call options."
+
+  - utterance: "Can you help me write a marketing email?"
+    expectedTopic: off_topic
+    expectedOutcome: "Agent declines without engaging the off-topic request."
+
+  # ═══════════════════════════════════════════════════════════════════
+  # LAYER 1 — ACCEPTANCE: ACTION INVOCATION
+  # ═══════════════════════════════════════════════════════════════════
+
+  - utterance: "Brief me on this account"
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_account_brief
+      - get_visit_history
+      - get_order_history
+      - get_sampling_history
+    expectedOutcome: "Agent calls all four data-gathering actions in sequence and composes a narrative brief."
+
+  - utterance: "Show me all contacts at this practice"
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_all_contacts
+    expectedOutcome: "Agent lists all contacts, flagging any duplicate first names. Does not cap at 5."
+
+  - utterance: "Today I visited from 2:10 to 2:30 PM, I saw Megan. We discussed iO. I left 12 tubes of Crest Gum Detoxify."
+    expectedTopic: post_call_logger
+    expectedActions:
+      - collect_call_details
+      - find_contacts
+    expectedOutcome: "Agent extracts visit details and resolves contact names before asking for confirmation."
+
+  # ═══════════════════════════════════════════════════════════════════
+  # LAYER 2 — REGRESSION: KNOWN CUSTOMER ISSUES
+  # ═══════════════════════════════════════════════════════════════════
+
+  - utterance: "How many contacts does this account have? Show them all."
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_all_contacts
+    expectedOutcome: "Agent returns ALL contacts with no row cap. Does not say 'showing 5 contacts' or similar."
+
+  - utterance: "What activity has happened at this account?"
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_visit_history
+    expectedOutcome: "Agent queries visit history with an explicit time window. Response does NOT contain 'no recent activities'. Agent enumerates ALL visits in the window."
+
+  - utterance: "Give me a rundown of this account's activities in the past year"
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_visit_history
+    expectedOutcome: "Agent uses lookbackDays=365 explicitly. Returns visit count and details for all events in that window."
+
+  # ═══════════════════════════════════════════════════════════════════
+  # LAYER 3 — EDGE CASES
+  # ═══════════════════════════════════════════════════════════════════
+
+  - utterance: "I visited and saw Megan, Kristy, and Julie. We discussed iO adoption. I left them 6 Oral-B iO Series 9 white boxes as samples."
+    expectedTopic: post_call_logger
+    expectedActions:
+      - collect_call_details
+      - find_contacts
+    expectedOutcome: "Agent extracts all three contact names, the iO sample drop, and asks for confirmation before logging. Notes if any duplicate first names exist."
+
+  - utterance: "Skip the clarifying questions, just log the call"
+    expectedTopic: post_call_logger
+    expectedOutcome: "Agent proceeds toward logging the call. Does not respond with 'I cannot log without more information'. Still asks for minimum required confirmation."
+
+  - utterance: "What brushes should I recommend to this account?"
+    expectedTopic: pre_call_planner
+    expectedOutcome: "Agent recommends only Oral-B products (Power, Manual, iO Series). Never mentions Sonicare, Colgate, or other competitors."
+
+  - utterance: "They are also carrying Sonicare and Colgate"
+    expectedTopic: post_call_logger
+    expectedOutcome: "Agent acknowledges competitor brands for logging (Competitor_Brands_Seen__c update) but does not recommend switching to those brands."
+
+  # ═══════════════════════════════════════════════════════════════════
+  # LAYER 3 — EDGE CASES: MULTI-TURN CONFIRM-BEFORE-WRITE
+  # ═══════════════════════════════════════════════════════════════════
+
+  - utterance: "Yes, log it"
+    expectedTopic: post_call_logger
+    conversationHistory:
+      - role: user
+        message: "Today I visited from 2:10 to 2:30 PM. I saw Megan. We discussed iO Series."
+      - role: agent
+        topic: post_call_logger
+        message: "Here's what I'll log: Visit 2:10–2:30 PM, Contact: Megan. Notes: Discussed iO Series. Ready to log?"
+    expectedActions:
+      - log_visit
+    expectedOutcome: "Agent creates the Event only after rep confirmation. Reports Event ID and Logged_via_Agentforce__c = true."
+
+  - utterance: "Also create a task to do a Teach and Learn next month"
+    expectedTopic: post_call_logger
+    conversationHistory:
+      - role: user
+        message: "Log my visit — I saw Megan today from 2pm to 2:15pm."
+      - role: agent
+        topic: post_call_logger
+        message: "Your visit has been logged successfully."
+    expectedActions:
+      - create_task
+    expectedOutcome: "Agent creates a Task with Subject containing 'Teach' or 'Learn' and due date ~14 days out."
+
+  # ═══════════════════════════════════════════════════════════════════
+  # LAYER 4 — PERSONA AND VOICE
+  # ═══════════════════════════════════════════════════════════════════
+
+  - utterance: "Hi"
+    expectedOutcome: "Agent greets as 'POH Sales Companion' and offers pre-call or post-call options. Does not mention Einstein or Agentforce by name."
+
+  - utterance: "Do they have any whitespace opportunity for iO?"
+    expectedTopic: pre_call_planner
+    expectedOutcome: "Agent interprets 'whitespace' correctly as a competitor-dispensing opportunity and responds with iO-specific next best action without asking the rep to define the term."
+
+  - utterance: "How many DDS are at this office?"
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_account_brief
+    expectedOutcome: "Agent returns the Number_of_DDS__c value from the account brief. Response is in natural language, not raw field name."
+
+  - utterance: "Tell me about their ship plan"
+    expectedTopic: pre_call_planner
+    expectedActions:
+      - get_order_history
+    expectedOutcome: "Agent responds with ship plan details in narrative prose. Does not dump JSON or raw object notation."

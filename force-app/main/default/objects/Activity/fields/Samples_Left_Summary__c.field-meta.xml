@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Samples_Left_Summary__c</fullName>
+    <description>One-line summary of samples left during this visit (e.g., "12 tubes Crest Gum Detoxify"). Quick-read for the next rep who reviews this event.</description>
+    <externalId>false</externalId>
+    <label>Samples Left Summary</label>
+    <length>255</length>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

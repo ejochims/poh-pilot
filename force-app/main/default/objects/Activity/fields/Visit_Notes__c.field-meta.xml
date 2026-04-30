@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Visit_Notes__c</fullName>
+    <description>Full narrative notes captured by the rep during or after the sales call. Populated by the Post_Call_Logger agent and surfaced in the pre-call brief via GetVisitHistory.</description>
+    <externalId>false</externalId>
+    <label>Visit Notes</label>
+    <type>TextArea</type>
+</CustomField>
