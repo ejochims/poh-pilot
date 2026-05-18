@@ -1,18 +1,27 @@
+/**
+ * Consolidated data provider for the POH Pre-Call Brief prompt template.
+ * Orchestrates four specialist readers — account profile, visit history, order history,
+ * and sampling history — and returns all data as a single structured prompt string
+ * for the GenAI prompt template to ground its response.
+ *
+ * Ported from poh-pilot; no schema changes required (orchestrator only).
+ */
 public with sharing class POHPreCallBriefData {
 
     public class Request {
-        @InvocableVariable(required=true description='Salesforce Account ID for the target dental practice')
+        @InvocableVariable(label='Account ID' required=true description='Salesforce Account ID for the target dental practice')
         public String accountId;
     }
 
     public class Response {
-        @InvocableVariable
+        @InvocableVariable(label='Brief Data Prompt')
         public String Prompt;
     }
 
     @InvocableMethod(
         label='POH Get Pre-Call Brief Data'
-        description='Consolidated data provider for the POH Pre Call Brief prompt template. Fetches practice profile, 12-month visit history, order and ship plan history, and sampling history in a single call. Returns all data as a structured prompt string.'
+        description='Returns a fully grounded data package for the Pre-Call Brief prompt template: practice profile, 12-month visit history, order/ship-plan history, and 24-month sampling history including stale iO detection.'
+        category='P&G Sales Companion'
     )
     public static List<Response> getBriefData(List<Request> requests) {
         List<Response> results = new List<Response>();
@@ -40,7 +49,7 @@ public with sharing class POHPreCallBriefData {
 
         // 2. Visit History — past 12 months
         POHGetVisitHistory.Request visitReq = new POHGetVisitHistory.Request();
-        visitReq.accountId = accountId;
+        visitReq.accountId  = accountId;
         visitReq.lookbackDays = 365;
         List<POHGetVisitHistory.Response> visitResults = POHGetVisitHistory.getVisitHistory(
             new List<POHGetVisitHistory.Request>{ visitReq }

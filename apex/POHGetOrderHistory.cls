@@ -1,3 +1,8 @@
+/**
+ * Returns past and upcoming Order_Item__c records for a dental practice,
+ * grouped by product family and ship plan type.
+ * Ported unchanged from poh-pilot (Order_Item__c schema is preserved).
+ */
 public with sharing class POHGetOrderHistory {
 
     public class Request {
@@ -10,7 +15,11 @@ public with sharing class POHGetOrderHistory {
         public String orderHistorySummary;
     }
 
-    @InvocableMethod(label='POH Get Order History' description='Returns ALL Order_Item__c records for the Account. Groups by product family and ship plan type. Covers past 12 months and future ship plan orders. No row cap.')
+    @InvocableMethod(
+        label='POH Get Order History'
+        description='Returns Order_Item__c records for the Account: past 12 months grouped by product family and ship plan type, plus upcoming planned deliveries. Includes ship plan detection.'
+        category='P&G Sales Companion'
+    )
     public static List<Response> getOrderHistory(List<Request> requests) {
         List<Response> results = new List<Response>();
         if (requests == null || requests.isEmpty()) return results;
@@ -41,10 +50,9 @@ public with sharing class POHGetOrderHistory {
         ];
 
         if (allItems.isEmpty()) {
-            return 'No order history available for this account in the past 12 months or upcoming 12 months.';
+            return 'No order history for this account in the past 12 months or upcoming 12 months.';
         }
 
-        // Separate past vs future
         List<Order_Item__c> pastItems   = new List<Order_Item__c>();
         List<Order_Item__c> futureItems = new List<Order_Item__c>();
         for (Order_Item__c oi : allItems) {
@@ -57,30 +65,28 @@ public with sharing class POHGetOrderHistory {
 
         List<String> lines = new List<String>();
 
-        // Past orders — grouped by product family
         lines.add('PAST 12 MONTHS (' + pastItems.size() + ' order records):');
         if (pastItems.isEmpty()) {
             lines.add('  No past orders in the last 12 months.');
         } else {
-            Map<String, Map<String, Decimal>> familyTypeTotals = new Map<String, Map<String, Decimal>>();
+            Map<String, Map<String, Decimal>> quantityByFamilyAndType = new Map<String, Map<String, Decimal>>();
             for (Order_Item__c oi : pastItems) {
-                String family = String.isNotBlank(oi.Product_Family__c) ? oi.Product_Family__c : 'Other';
+                String family   = String.isNotBlank(oi.Product_Family__c) ? oi.Product_Family__c : 'Other';
                 String planType = String.isNotBlank(oi.Ship_Plan_Type__c) ? oi.Ship_Plan_Type__c : 'Unspecified';
-                if (!familyTypeTotals.containsKey(family)) {
-                    familyTypeTotals.put(family, new Map<String, Decimal>());
+                if (!quantityByFamilyAndType.containsKey(family)) {
+                    quantityByFamilyAndType.put(family, new Map<String, Decimal>());
                 }
-                Decimal existing = familyTypeTotals.get(family).containsKey(planType)
-                    ? familyTypeTotals.get(family).get(planType) : 0;
-                familyTypeTotals.get(family).put(planType, existing + (oi.Quantity__c != null ? oi.Quantity__c : 0));
+                Decimal current = quantityByFamilyAndType.get(family).containsKey(planType)
+                    ? quantityByFamilyAndType.get(family).get(planType) : 0;
+                quantityByFamilyAndType.get(family).put(planType, current + (oi.Quantity__c != null ? oi.Quantity__c : 0));
             }
-            for (String family : familyTypeTotals.keySet()) {
-                for (String planType : familyTypeTotals.get(family).keySet()) {
-                    Decimal qty = familyTypeTotals.get(family).get(planType);
+            for (String family : quantityByFamilyAndType.keySet()) {
+                for (String planType : quantityByFamilyAndType.get(family).keySet()) {
+                    Decimal qty = quantityByFamilyAndType.get(family).get(planType);
                     lines.add('  ' + family + ' | ' + planType + ': ' + qty.intValue() + ' units');
                 }
             }
 
-            // Ship plan detection
             Boolean hasShipPlan = false;
             String shipPlanType = '';
             for (Order_Item__c oi : pastItems) {
@@ -91,13 +97,12 @@ public with sharing class POHGetOrderHistory {
                 }
             }
             if (hasShipPlan) {
-                lines.add('  Ship Plan Type: ' + shipPlanType);
+                lines.add('  Ship Plan Type detected: ' + shipPlanType);
             } else {
-                lines.add('  Note: No active ship plan detected — all orders appear to be One-Time or manual.');
+                lines.add('  Note: No active ship plan detected — orders appear to be One-Time or manual.');
             }
         }
 
-        // Future ship plan
         lines.add('');
         lines.add('UPCOMING SHIP PLAN ORDERS (' + futureItems.size() + ' records):');
         if (futureItems.isEmpty()) {
@@ -106,10 +111,10 @@ public with sharing class POHGetOrderHistory {
             for (Order_Item__c oi : futureItems) {
                 String productName = String.isNotBlank(oi.Product_Name__c) ? oi.Product_Name__c
                     : (oi.Product__r != null && String.isNotBlank(oi.Product__r.Name) ? oi.Product__r.Name : 'Unknown Product');
-                String qty = oi.Quantity__c != null ? String.valueOf(oi.Quantity__c.intValue()) : '0';
+                String qty       = oi.Quantity__c != null ? String.valueOf(oi.Quantity__c.intValue()) : '0';
                 String orderDate = oi.Order_Date__c != null ? oi.Order_Date__c.format() : 'TBD';
-                String planType = String.isNotBlank(oi.Ship_Plan_Type__c) ? oi.Ship_Plan_Type__c : 'Unspecified';
-                lines.add('  - ' + orderDate + ': ' + productName + ' x' + qty + ' (' + planType + ')');
+                String planType  = String.isNotBlank(oi.Ship_Plan_Type__c) ? oi.Ship_Plan_Type__c : 'Unspecified';
+                lines.add('  - ' + orderDate + ': ' + productName + ' ×' + qty + ' (' + planType + ')');
             }
         }
 

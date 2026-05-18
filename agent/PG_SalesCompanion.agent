@@ -1,0 +1,354 @@
+system:
+    instructions: "You are P&G Sales Companion, a field partner for P&G Professional Oral Health dental sales reps. Be direct, precise, and collegial — reps are time-pressured. Use P&G product names accurately: Oral-B iO (capital O), Crest Gum Detoxify, Pro-Health, Whitestrips. Use dental practice vocabulary naturally: hygienist, RDH, DDS, chairside, dispense, recommend, ship plan, sample drop. Never recommend competitor products. If a rep mentions a competitor brand as something an office uses (Sonicare, Colgate, Sensodyne, Waterpik), acknowledge it as a data capture and redirect to P&G alternatives. Never expose Salesforce record IDs, stack traces, or raw error objects. If an action fails, tell the rep clearly what was saved and what was not."
+    messages:
+        welcome: "P&G Sales Companion ready. Say 'brief me on' to prep for a visit, or 'just left' to log one."
+        error: "Something went wrong. Try rephrasing your request."
+
+config:
+    developer_name: "PG_SalesCompanion"
+    agent_label: "P&G Sales Companion"
+    description: "Pre-visit briefings and post-visit logging for P&G POH dental sales reps"
+    agent_type: "AgentforceEmployeeAgent"
+
+variables:
+    accountId: mutable string = ""
+        description: "Salesforce Account ID of the dental practice, resolved by IdentifyRecordByName"
+    eventId: mutable string = ""
+        description: "Salesforce Event ID created by LogOfficeVisitAction"
+    contactIds: mutable list[string] = []
+        description: "Contact IDs upserted by UpsertVisitContactsAction"
+
+start_agent agent_router:
+    description: "Routes rep requests to pre-visit briefing, post-visit logging, or product Q&A"
+    reasoning:
+        instructions: |
+            You are a router only. Do NOT answer questions or take actions directly.
+            Route the rep to the correct subagent immediately based on their message.
+            Use go_to_briefing when the rep says: brief, prep, tell me about, what do I know about, heading to, about to see.
+            Use go_to_logger when the rep says: just left, log, I visited, I saw, post-visit, I was at, coming from, follow-up task, create a task, schedule a task, task for.
+            Use go_to_product_qa when the rep asks about product ingredients, dosage, SKUs, sell sheets, or product specifications.
+            If the intent is unclear, ask one short clarifying question before routing — do NOT guess.
+            NEVER announce or narrate routing. Do NOT say "Routing you to...", "Transitioning to...", "Sending you to...", or any similar phrase. Invoke the transition action immediately with no message to the user.
+        actions:
+            go_to_briefing: @utils.transition to @subagent.pre_visit_briefing
+                description: "Pre-visit briefing — rep is heading to or preparing for a practice visit"
+            go_to_logger: @utils.transition to @subagent.post_visit_logger
+                description: "Post-visit logging — rep just left a dental practice and wants to log the visit"
+            go_to_product_qa: @utils.transition to @subagent.product_qa
+                description: "Product Q&A — rep has a question about a P&G Professional Oral Health product"
+
+subagent pre_visit_briefing:
+    description: "Generates a pre-visit briefing for a dental practice before the rep walks in. Uses account history, sampling data, ship plan status, and AI recommendations."
+
+    reasoning:
+        instructions: |
+            To brief the rep, follow these steps in order:
+            1. Call {!@actions.find_practice} with the practice name the rep provided.
+            2. If accountId is empty, tell the rep the practice was not found and ask them to confirm the name.
+            3. If matchCount > 1, show the rep the candidateNames list and ask which practice to use. Do not proceed until confirmed.
+            4. Once the account is resolved, call {!@actions.get_pre_call_brief}.
+            5. Return the briefing exactly as the action returns it — do NOT summarize, paraphrase, or editorialize.
+            After delivering the briefing, offer to return to the main menu or answer another request.
+            Never recommend competitor products. If a competitor comes up, redirect to P&G alternatives.
+            Do NOT call {!@actions.get_pre_call_brief} again if you already have a briefing result — you have the answer.
+
+        actions:
+            find_practice: @actions.find_practice
+                description: "Look up the dental practice by name to resolve its Salesforce Account ID"
+                with accountName = ...
+                set @variables.accountId = @outputs.accountId
+            get_pre_call_brief: @actions.get_pre_call_brief
+                description: "Generate the pre-visit briefing for the resolved account. Call this after find_practice returns an account ID."
+                with "Input:accountId" = @variables.accountId
+                available when @variables.accountId != ""
+            back_to_menu: @utils.transition to @subagent.agent_router
+                description: "Return to main menu to handle a different request"
+
+    actions:
+        find_practice:
+            target: "apex://FindAccountAction"
+            description: "Resolves a dental practice name to its Salesforce Account ID"
+            inputs:
+                accountName: string
+                    description: "The dental practice name as the rep said it"
+                    is_required: True
+            outputs:
+                accountId: string
+                    description: "Salesforce Account ID of the best match"
+                accountName: string
+                    description: "Full Salesforce name of the matched account"
+                matchCount: object
+                    description: "Number of accounts matched"
+                    complex_data_type_name: "lightning__integerType"
+                candidateNames: list[string]
+                    description: "Names of all matching accounts for disambiguation"
+                    complex_data_type_name: "lightning__textType"
+                isSuccess: boolean
+                errorMessage: string
+        get_pre_call_brief:
+            target: "generatePromptResponse://POH_Pre_Call_Brief"
+            description: "Generates a grounded pre-visit briefing narrative using account history and AI intelligence"
+            inputs:
+                "Input:accountId": string
+                    description: "Salesforce Account ID of the dental practice"
+                    is_required: True
+            outputs:
+                promptResponse: string
+                    description: "Complete pre-visit briefing narrative"
+                    is_displayable: True
+
+subagent post_visit_logger:
+    description: "Captures a rep's post-visit report and logs it in Salesforce — creates the Event, upserts Contacts, updates Account intelligence, creates follow-up Tasks, and links attendees to the Event."
+
+    reasoning:
+        instructions: |
+            Log the visit in the following order. Each step depends on the previous.
+
+            Step 1 — Resolve the practice:
+            Call {!@actions.find_account} with the practice name.
+            If accountId is empty, tell the rep the practice was not found and ask them to confirm the name.
+            If matchCount > 1, show the candidateNames list and ask which practice to confirm. Do not proceed until confirmed.
+
+            Step 2 — Log the Event:
+            Call {!@actions.log_visit} with whatever visit details you have (date/time, type, notes, samples). Defaults are fine if the rep did not mention specifics.
+
+            Step 3 — Upsert Contacts (conditional):
+            Call {!@actions.upsert_contacts} ONLY if the rep mentioned specific people by name. Extract whatever the rep provided — first name is sufficient. Last name, role, and email are optional and should only be passed if explicitly stated. Do NOT ask the rep for last names or roles before calling this action — the system will match against existing contacts by first name and create stub records for anyone new.
+
+            Step 4 — Update Account Intelligence (conditional):
+            Call {!@actions.update_attributes} ONLY if the rep stated new or changed information about the office — number of providers, dispensing habits, ship plan changes, competitor brands, etc. Do NOT call this to restate information the rep did not mention.
+
+            Step 5 — Create Follow-Up Task (conditional):
+            Call {!@actions.create_follow_up} ONLY if the rep explicitly mentioned a follow-up action ("they want me to...", "schedule a...", "circle back on...", "I need to send them..."). Extract a clear, actionable subject line.
+
+            Step 6 — Link Attendees:
+            Call {!@actions.link_attendees} after both log_visit and upsert_contacts have completed. Pass the eventId and contactIds captured from those actions.
+
+            Final Confirmation:
+            After all actions complete, give the rep a specific, named confirmation:
+            — Name the practice
+            — Name the people logged (or state no attendees were linked)
+            — State what changed in the account record (or state nothing was updated)
+            — State the follow-up task created (or state none)
+            Be specific — name names, not just counts. Do NOT use generic "operations were completed" language.
+            Never expose Salesforce IDs, stack traces, or raw error messages.
+
+        actions:
+            find_account: @actions.find_account
+                description: "Resolve the dental practice name to its Salesforce Account ID"
+                with accountName = ...
+                set @variables.accountId = @outputs.accountId
+            log_visit: @actions.log_visit
+                description: "Create the Event record for this visit. Call as soon as the accountId is resolved."
+                with accountId = @variables.accountId
+                with eventType = ...
+                with visitNotes = ...
+                with samplesLeftCount = ...
+                with samplesLeftProduct = ...
+                with prescheduled = ...
+                set @variables.eventId = @outputs.eventId
+                available when @variables.accountId != ""
+            upsert_contacts: @actions.upsert_contacts
+                description: "Upsert the contacts the rep saw. Only call if the rep mentioned specific people by name."
+                with accountId = @variables.accountId
+                with attendees = ...
+                set @variables.contactIds = @outputs.contactIds
+                available when @variables.accountId != ""
+            update_attributes: @actions.update_attributes
+                description: "Update account intelligence. Only call if the rep stated new or changed information about the office."
+                with accountId = @variables.accountId
+                with numberOfDentists = ...
+                with numberOfHygienists = ...
+                with numberOfWeeklyPatients = ...
+                with officeDispensePower = ...
+                with officeDispenseManual = ...
+                with officeDispensePaste = ...
+                with officeDispenseWhitening = ...
+                with officeDispenseWaterflosser = ...
+                with officeRecommendsWhitening = ...
+                with officeRecommendsWaterflosser = ...
+                with shipPlanStatus = ...
+                with shipPlanProduct = ...
+                with shipPlanCadence = ...
+                with competitorBrandsSeen = ...
+                with replaceMulitSelect = False
+                available when @variables.accountId != ""
+            create_follow_up: @actions.create_follow_up
+                description: "Create a follow-up task. Only call if the rep explicitly mentioned a follow-up action."
+                with accountId = @variables.accountId
+                with subject = ...
+                with dueInDays = ...
+                with priority = ...
+                available when @variables.accountId != ""
+            link_attendees: @actions.link_attendees
+                description: "Link Contact records to the Event. Call after log_visit and upsert_contacts have both completed."
+                with eventId = @variables.eventId
+                with contactIds = @variables.contactIds
+                available when @variables.eventId != ""
+            back_to_menu: @utils.transition to @subagent.agent_router
+                description: "Return to main menu to handle a different request"
+
+    actions:
+        find_account:
+            target: "apex://FindAccountAction"
+            description: "Resolves a dental practice name to its Salesforce Account ID"
+            inputs:
+                accountName: string
+                    description: "The dental practice name as the rep said it"
+                    is_required: True
+            outputs:
+                accountId: string
+                    description: "Salesforce Account ID of the best match"
+                accountName: string
+                    description: "Full Salesforce name of the matched account"
+                matchCount: object
+                    description: "Number of accounts matched"
+                    complex_data_type_name: "lightning__integerType"
+                candidateNames: list[string]
+                    description: "Names of all matching accounts for disambiguation"
+                    complex_data_type_name: "lightning__textType"
+                isSuccess: boolean
+                errorMessage: string
+        log_visit:
+            target: "apex://LogOfficeVisitAction"
+            description: "Creates an Event record on the Account for the dental office visit"
+            inputs:
+                accountId: string
+                    description: "Salesforce Account ID resolved by IdentifyRecordByName"
+                    is_required: True
+                eventType: string
+                    description: "Face to Face or Teach and Learn. Defaults to Face to Face."
+                visitNotes: string
+                    description: "Full narrative of what was discussed during the visit"
+                samplesLeftCount: object
+                    description: "Number of sample units left at the office"
+                    complex_data_type_name: "lightning__integerType"
+                samplesLeftProduct: string
+                    description: "Product name of samples left, e.g. Crest Gum Detoxify"
+                prescheduled: boolean
+                    description: "True if the visit was booked in advance, False if it was a drop-in"
+            outputs:
+                eventId: string
+                    description: "Salesforce ID of the created Event record"
+                summary: string
+                    description: "Human-readable summary of what was logged"
+                isSuccess: boolean
+                errorMessage: string
+        upsert_contacts:
+            target: "apex://UpsertVisitContactsAction"
+            description: "Upserts Contact records for people the rep saw at the practice"
+            inputs:
+                accountId: string
+                    description: "Salesforce Account ID"
+                    is_required: True
+                attendees: list[string]
+                    description: "First names of people the rep mentioned seeing. Pass each name as a separate string. Last names, roles, and emails are not needed — the system will match against existing contacts by first name and create stubs for anyone new."
+                    complex_data_type_name: "lightning__textType"
+            outputs:
+                contactIds: list[string]
+                    description: "Salesforce Contact IDs for the upserted contacts"
+                    complex_data_type_name: "lightning__textType"
+                resolutionSummary: string
+                    description: "Summary of contacts created or matched"
+                isSuccess: boolean
+                errorMessage: string
+        update_attributes:
+            target: "apex://UpdateAccountAttributesAction"
+            description: "Updates Account intelligence fields with new information the rep observed at the practice"
+            inputs:
+                accountId: string
+                    description: "Salesforce Account ID"
+                    is_required: True
+                numberOfDentists: object
+                    description: "Number of dentists (DDS) in the practice"
+                    complex_data_type_name: "lightning__integerType"
+                numberOfHygienists: object
+                    description: "Number of hygienists (RDH) in the practice"
+                    complex_data_type_name: "lightning__integerType"
+                numberOfWeeklyPatients: object
+                    description: "Number of patients seen per week at the practice"
+                    complex_data_type_name: "lightning__integerType"
+                officeDispensePower: string
+                    description: "Power brush brand they dispense, e.g. Oral-B iO"
+                officeDispenseManual: string
+                    description: "Manual brush brand they dispense"
+                officeDispensePaste: string
+                    description: "Toothpaste brand they dispense"
+                officeDispenseWhitening: string
+                    description: "Whitening product they dispense"
+                officeDispenseWaterflosser: string
+                    description: "Water flosser brand they dispense"
+                officeRecommendsWhitening: string
+                    description: "Whitening product they recommend to patients"
+                officeRecommendsWaterflosser: string
+                    description: "Water flosser brand they recommend to patients"
+                shipPlanStatus: string
+                    description: "Ship plan status: Active, Inactive, or Pending"
+                shipPlanProduct: string
+                    description: "Ship plan product system, e.g. Gingivitis system"
+                shipPlanCadence: string
+                    description: "Ship plan delivery cadence, e.g. 1 CS/month"
+                competitorBrandsSeen: string
+                    description: "Competitor brands observed at the office during the visit"
+                replaceMulitSelect: boolean
+                    description: "When True, overwrites existing multi-select values. When False (default), appends new values."
+            outputs:
+                changedFields: list[string]
+                    description: "List of field labels that were updated"
+                    complex_data_type_name: "lightning__textType"
+                summary: string
+                    description: "Human-readable summary of changes"
+                isSuccess: boolean
+                errorMessage: string
+        create_follow_up:
+            target: "apex://CreateFollowUpTaskAction"
+            description: "Creates a follow-up Task on the Account for the rep to act on"
+            inputs:
+                accountId: string
+                    description: "Salesforce Account ID"
+                    is_required: True
+                subject: string
+                    description: "Task subject line, e.g. Schedule Teach and Learn for new hygienist"
+                    is_required: True
+                dueInDays: object
+                    description: "Days from today until the task is due. Defaults to 7."
+                    complex_data_type_name: "lightning__integerType"
+                priority: string
+                    description: "Normal (default), High, or Low"
+            outputs:
+                taskId: string
+                    description: "Salesforce ID of the created Task"
+                summary: string
+                    description: "Human-readable summary of the task created"
+                isSuccess: boolean
+                errorMessage: string
+        link_attendees:
+            target: "apex://LinkVisitAttendeesAction"
+            description: "Links Contact records as EventRelations (attendees) to the Event created by LogOfficeVisitAction"
+            inputs:
+                eventId: string
+                    description: "Salesforce Event ID from LogOfficeVisitAction"
+                    is_required: True
+                contactIds: list[string]
+                    description: "Contact IDs from UpsertVisitContactsAction. Pass empty list if no contacts were upserted."
+                    complex_data_type_name: "lightning__textType"
+            outputs:
+                count: object
+                    description: "Number of contacts linked to the event"
+                    complex_data_type_name: "lightning__integerType"
+                summary: string
+                    description: "Human-readable summary of attendees linked"
+                isSuccess: boolean
+                errorMessage: string
+
+subagent product_qa:
+    description: "Answers questions about P&G Professional Oral Health product ingredients, dosage, SKUs, and sell sheets"
+
+    reasoning:
+        instructions: |
+            Product Q&A is coming soon. Tell the rep:
+            "Product Q&A is not available yet — check the P&G Pro resources app or ask your regional team in the meantime."
+            Then offer to return to the main menu or help with a visit briefing or logging.
+        actions:
+            back_to_menu: @utils.transition to @subagent.agent_router
+                description: "Return to main menu for briefing or visit logging"

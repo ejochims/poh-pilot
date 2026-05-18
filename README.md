@@ -1,336 +1,343 @@
-# POH Pre-Call Brief — Agentforce Prompt Template + Apex
+# P&G Sales Companion — Agentforce Reference Implementation
 
-This repo contains the Apex classes and Prompt Template that power the **pre-call planning brief** for a Professional Oral Health (POH) Agentforce implementation. The implementation partner can use this as the reference for building the grounded Prompt Template in the customer's production org.
+This repo contains the Apex classes, Prompt Template, and Agent Script source that power a complete **P&G Professional Oral Health (POH) Sales Companion** built on Agentforce. It covers two live flows:
+
+- **Pre-visit briefing** — the rep asks to be briefed on a dental practice before walking in; the agent returns a grounded 6-section narrative with no hallucination risk
+- **Post-visit logging** — the rep dictates a paragraph after leaving a practice; the agent resolves the account, logs the Event, links attendees, updates Account intelligence, and creates follow-up Tasks in one conversational turn
+
+A third flow (Product Q&A) is stubbed and ready to wire.
+
+---
+
+## What This Is Built On
+
+This implementation uses **Agentforce Agent Script**, the source-code authoring format for Agentforce agents. Rather than configuring agents through the Agent Builder UI, the entire agent — router, subagents, actions, instructions, and variable wiring — lives in a single `.agent` file that deploys through the standard Salesforce CLI metadata pipeline.
+
+The `.agent` file is the authoritative definition of how the agent behaves. The UI reflects what the file contains; the file is the source of truth. This matters for production implementations: it means the agent can be version-controlled, code-reviewed, and deployed the same way everything else is.
+
+The CLI command to publish changes is:
+
+```bash
+sf agent publish authoring-bundle --api-name PG_SalesCompanion --target-org <alias>
+```
 
 ---
 
 ## Architecture Overview
 
-The core design goal was a single, grounded AI response with no hallucination risk. The way Agentforce works by default, if you ask it to "brief me on an account," it will try to figure out what to do, call actions one at a time, and synthesize across multiple back-and-forth LLM turns. That creates opportunities for the model to make things up between steps.
-
-The solution here flips that model. Instead of the agent gathering data and then asking the LLM to summarize it, the **Prompt Template itself fetches all the data first** using an Apex class registered as a `templateDataProvider`. By the time the LLM sees any text, every field, every visit, every order line is already sitting in the prompt as structured plain text. The LLM's only job is to write prose from that grounded data — it cannot invent numbers or dates because the actual data is already there.
-
-The full call chain:
+The agent uses a **hub-and-spoke** pattern. A stateless router receives every message and transitions to the correct specialist subagent. Each subagent owns its own actions, instructions, and variable state.
 
 ```
-Agentforce agent
-  └─► generatePromptResponse://POH_Pre_Call_Brief
-        │
-        │  [Before LLM sees anything, Salesforce calls the data provider]
-        │
-        └─► POHPreCallBriefData (Apex — runs inside the template as a data provider)
+User message
+    │
+    ▼
+agent_router (start_agent)
+    │
+    ├──► pre_visit_briefing
+    │         │
+    │         ├── find_practice (apex://FindAccountAction)
+    │         └── get_pre_call_brief (generatePromptResponse://POH_Pre_Call_Brief)
+    │
+    ├──► post_visit_logger
+    │         │
+    │         ├── find_account (apex://FindAccountAction)
+    │         ├── log_visit (apex://LogOfficeVisitAction)
+    │         ├── upsert_contacts (apex://UpsertVisitContactsAction)
+    │         ├── update_attributes (apex://UpdateAccountAttributesAction)
+    │         ├── create_follow_up (apex://CreateFollowUpTaskAction)
+    │         └── link_attendees (apex://LinkVisitAttendeesAction)
+    │
+    └──► product_qa (stub)
+```
+
+**Key architectural points:**
+
+- The router does zero work. It does not answer questions or call actions. It routes and transitions.
+- Account resolution happens first in every subagent before any write actions fire.
+- The agent manages `accountId`, `eventId`, and `contactIds` as mutable variables in the `.agent` file. Actions set these variables via `set @variables.x = @outputs.y` bindings.
+- `link_attendees` is sequenced after both `log_visit` and `upsert_contacts` because it depends on outputs from both. The agent's `available when` guard enforces this.
+
+---
+
+## Part 1: Pre-Visit Briefing
+
+### How it works
+
+The briefing is grounded entirely in live CRM data. The design goal is zero hallucination risk: by the time the LLM writes a single word, every fact about the practice is already present in the prompt as structured plain text.
+
+```
+Agent → generatePromptResponse://POH_Pre_Call_Brief
               │
-              ├─► POHGetAccountBrief     → practice name, address, specialty, DDS/RDH counts,
-              │                            dispensing/recommending status, competitor brands,
-              │                            last iO sample date, AI Sales Companion recommendation
+              │  [Before LLM is invoked, Salesforce calls the data provider]
               │
-              ├─► POHGetVisitHistory     → all Events on the Account in the past 12 months,
-              │                            attendees resolved from WhoId + EventRelation,
-              │                            visit notes, samples left summary
+              └─► POHPreCallBriefData (Apex templateDataProvider)
+                        │
+                        ├─► POHGetAccountBrief     → practice profile, demographics,
+                        │                             dispensing/recommending (multi-select),
+                        │                             competitor brands, last iO sample date,
+                        │                             AI Sales Companion recommendation
+                        │
+                        ├─► POHGetVisitHistory     → Events past 12 months, attendees
+                        │                             from WhoId + EventRelation, visit notes,
+                        │                             samples left (count + product)
+                        │
+                        ├─► POHGetOrderHistory     → Order_Item__c past 12 months + future
+                        │                             ship plan orders, grouped by product family
+                        │
+                        └─► POHGetSamplingHistory  → Sample drops past 24 months,
+                                                      last iO sample date, stale flag if > 2 years
+                        │
+                        └─► Returns one structured plain-text string
               │
-              ├─► POHGetOrderHistory     → all Order_Item__c records past 12 months + future
-              │                            ship plan orders, grouped by product family,
-              │                            ship plan type detection
-              │
-              └─► POHGetSamplingHistory  → sample drops past 24 months, last Oral-B iO
-                                           sample date, stale flag if > 2 years
-              │
-              └─► Returns one big structured plain-text string
-        │
-        │  [That string is injected into the prompt at {!$Apex:POHPreCallBriefData.Prompt}]
-        │
-        └─► LLM synthesizes a complete 6-section brief using only the grounded data
+              └─► LLM writes a 6-section brief from the grounded data
 ```
+
+The full call chain is documented in detail in the original `poh-pilot` README sections 1–6. The schema for `POHGetAccountBrief` has been updated in this implementation to match the current multi-select Account field design — see the Data Model section below.
+
+### Account schema changes from the original poh-pilot
+
+The original implementation used boolean (checkbox) fields for dispensing and recommending:
+
+```
+Dispenses_Power__c    (Checkbox)
+Dispenses_Manual__c   (Checkbox)
+Recommends_Power__c   (Checkbox)
+Recommends_Manual__c  (Checkbox)
+```
+
+This implementation replaces those with multi-select picklists covering the full product range the customer tracks:
+
+```
+Office_Dispense_Power__c        (Multi-select: Does Not Dispense; Oral B; Sonicare; Other; Unknown)
+Office_Dispense_Manual__c       (Multi-select: Does Not Dispense; Oral B; Colgate; Butler; Other; Unknown)
+Office_Dispense_Paste__c        (Multi-select: Does Not Dispense; Crest; Colgate; Sensodyne; Other; Unknown)
+Office_Dispense_Whitening__c    (Multi-select: Does Not Dispense; White Strips; Daily Serum; Opalescence; Zoom; Other; Unknown)
+Office_Dispense_Waterflosser__c (Multi-select: Does Not Dispense; Oral B; Waterpik; Other; Unknown)
+Office_Recommends_Whitening__c  (Multi-select: White Strips; Daily Serum; Opalescence; Zoom; Other; Unknown)
+Office_Recommends_Waterflosser__c (Multi-select: Oral B; Waterpik; Other; Unknown)
+```
+
+`POHGetAccountBrief.cls` reads these as string fields and formats them into labeled lines. The LLM instructions reference the full list including competitor values (e.g., "Sonicare in the Power slot") as signals for the next-best-action recommendation.
+
+The demographic fields were also renamed:
+
+| poh-pilot | This implementation |
+|---|---|
+| `Number_of_DDS__c` | `Number_of_Dentists__c` |
+| `Number_of_RDH__c` | `Number_of_Hygienists__c` |
+
+Three new demographic fields were added: `Number_of_Ortho_Pedo__c`, `Number_of_Weekly_Patients__c`, and a ship plan group (`Ship_Plan_Status__c`, `Ship_Plan_Product__c`, `Ship_Plan_Cadence__c`).
+
+### Event schema changes from the original poh-pilot
+
+The original `Samples_Left_Summary__c` (free text) has been replaced with two structured fields:
+
+| poh-pilot | This implementation |
+|---|---|
+| `Samples_Left_Summary__c` (Text) | `Samples_Left_Count__c` (Number) + `Samples_Left_Product__c` (Text) |
+
+`POHGetVisitHistory` reads both: it formats them as `"X units of Product"` for the brief. If `Samples_Left_Count__c` is null, it falls back to the old `Description` field for seeded historical data.
+
+A fourth field, `Prescheduled__c` (Checkbox), was also added to track whether visits were drop-ins or scheduled in advance.
 
 ---
 
-## How the Code Works — A Full Walkthrough
+## Part 2: Post-Visit Logging
 
-### 1. The Prompt Template (`POH_Pre_Call_Brief.genAiPromptTemplate-meta.xml`)
+This is the new flow added in this implementation. The rep speaks one paragraph after leaving a dental office. The agent resolves the account, then fires up to five actions to capture everything the rep mentioned — and skips any action for which the rep didn't provide relevant input.
 
-The template is the entry point. When the agent calls `generatePromptResponse://POH_Pre_Call_Brief`, Salesforce does three things in order:
+### The hero utterance
 
-**Step 1 — Resolve the input.** The template declares one input, `accountId` (referenced as `Input:accountId`). The agent passes the Salesforce Account ID here.
+> "Just left Smile Dental. Was there from 2 to 2:30. Saw Megan and Kristy. Talked about the iO Series 9 — they're very interested. Left 8 brushes. They want a Teach and Learn for their new hygienist next month."
 
-**Step 2 — Run the data provider.** Before the LLM is invoked at all, Salesforce calls the Apex class registered under `templateDataProviders`. That registration looks like this in the XML:
+From this single message, the planner:
+1. Resolves "Smile Dental" to a Salesforce Account ID
+2. Creates a Face-to-Face Event with the time, notes, and sample count/product
+3. Matches "Megan" and "Kristy" to existing Contacts on the Account by first name
+4. Creates a follow-up Task: "Schedule Teach and Learn for new hygienist"
+5. Links both contacts to the Event as invitees
 
-```xml
-<templateDataProviders>
-    <definition>apex://POHPreCallBriefData</definition>
-    <parameters>
-        <parameterName>accountId</parameterName>
-        <valueExpression>{!$Input:accountId}</valueExpression>
-    </parameters>
-    <referenceName>Apex:POHPreCallBriefData</referenceName>
-</templateDataProviders>
-```
-
-This tells Salesforce: run `POHPreCallBriefData`, pass it the `accountId` from the template input, and make the result available as `Apex:POHPreCallBriefData`.
-
-**Step 3 — Inject and generate.** The template content contains this merge field:
+### Action sequence and conditional firing
 
 ```
-{!$Apex:POHPreCallBriefData.Prompt}
+Turn 1:  find_account          (always — resolve Account ID before anything else)
+
+Turn 2:  log_visit             (always — if a visit occurred)
+         upsert_contacts       (conditional — only if names were mentioned)
+         update_attributes     (conditional — only if new office info was stated)
+         create_follow_up      (conditional — only if a follow-up was explicitly mentioned)
+
+Turn 3:  link_attendees        (sequential — after log_visit AND upsert_contacts)
 ```
 
-That resolves to the `Prompt` output variable from `POHPreCallBriefData`. The entire structured data string gets embedded into the prompt text, and the LLM is invoked exactly once on the fully grounded prompt.
+Turns 2 and 3 are enforced by the `available when` guards in the `.agent` file. `link_attendees` is gated on `@variables.eventId != ""`, which is only set after `log_visit` completes.
 
-The template also contains explicit LLM instructions — what sections to write, what order, and a hard rule not to fabricate anything not present in the grounded data. That instruction is what prevents hallucination.
+### Action: `FindAccountAction`
+
+Resolves a dental practice name to its Salesforce Account ID using a `LIKE '%name%'` query.
+
+**Note on `IdentifyRecordByName`:** The standard `standardInvocableAction://IdentifyRecordByName` action is the preferred approach for account resolution and would avoid this custom class entirely. In this implementation, a known org-level issue prevented it from registering during bundle creation, which is why `FindAccountAction` exists as a workaround. In a production org, attempt `IdentifyRecordByName` first; fall back to this class only if the publish step fails during `GenAiFunctionDefinition` creation.
+
+`FindAccountAction` returns `accountId`, `accountName`, `matchCount`, and a `candidateNames` list so the agent can present disambiguation options when multiple accounts match. The agent's instructions handle disambiguation conversationally — no Apex needed for that logic.
+
+### Action: `LogOfficeVisitAction`
+
+Creates an `Event` record on the Account for the visit.
+
+**Required input:** `accountId`
+
+**Optional inputs:** `startDateTime`, `endDateTime`, `eventType` (Face to Face or Teach & Learn), `visitNotes`, `samplesLeftCount`, `samplesLeftProduct`, `prescheduled`
+
+**Defaults when omitted:** `startDateTime = now()`, `endDateTime = start + 20 minutes`, `eventType = Face to Face`
+
+The record is assigned the `Office_Visit` record type at runtime via `Event.SObjectType.getDescribe().getRecordTypeInfosByDeveloperName()`. If the record type is unavailable, the Event is still created without it — the action degrades gracefully rather than failing.
+
+`visitNotes` is written to both `Visit_Notes__c` (the structured custom field) and the standard `Description` field. This ensures briefings that read `Description` as a fallback still pick up post-call notes if the custom field isn't populated.
+
+**Output:** `eventId` (passed to `link_attendees`), `summary`
+
+### Action: `UpsertVisitContactsAction`
+
+Matches attendee first names to existing Contacts on the Account. Creates stub Contact records for anyone new.
+
+**Required input:** `accountId`
+
+**Input:** `attendees` — a `list[string]` of first names exactly as the rep mentioned them (e.g., `["Megan", "Kristy"]`)
+
+**Resolution logic per name:**
+1. Query all Contacts where `AccountId = :accountId`
+2. Build a case-insensitive first-name map, with real contacts (LastName ≠ "(Unknown)") inserted before any stub contacts so real matches always win on collision
+3. For each name: single first-name match → link it; multiple matches → take the first, note it in the summary; zero matches → create a new Contact with `LastName = '(Unknown)'`
+
+**Important platform note on `list[string]` inputs:** When passing a `list[string]` through the `lightning__textType` complex data type in Agent Script, the platform can append pipe (`|`) characters to list items during serialization. The action sanitizes incoming names by stripping all pipe characters before matching: `name.trim().replaceAll('\\|', '').trim()`. This is not documented behavior — add this sanitization to any action that accepts `list[string]` inputs.
+
+**Output:** `contactIds` (passed to `link_attendees`), `resolutionSummary`
+
+### Action: `UpdateAccountAttributesAction`
+
+Updates intelligence fields on the Account. Only non-null inputs produce DML — if the rep didn't mention an attribute, that field is not touched.
+
+**Required input:** `accountId`
+
+**Optional inputs:** All Account intelligence fields (demographics, all 7 multi-select dispense/recommend fields, ship plan fields, competitor brands)
+
+**Multi-select append vs. replace:** The `replaceMulitSelect` boolean (default `false`) controls whether new values are appended to existing multi-select field values or overwrite them. When appending, the action queries the existing field values, merges the incoming values into the set, deduplicates, and sorts before writing. This prevents the common pattern where repeated agent calls accumulate duplicate entries.
+
+**The inclusion/exclusion rule in the action description matters:** The `@InvocableMethod` description explicitly says "Call ONLY when the rep states a CHANGE or NEW data point about the office. Do NOT call when the rep is restating known information or describing what was discussed in a visit." This sharp boundary prevents the planner from calling `update_attributes` for visit narrative content that belongs in `log_visit`.
+
+**Output:** `changedFields` (list of field labels that changed), `summary`
+
+### Action: `CreateFollowUpTaskAction`
+
+Creates a Task on the Account.
+
+**Required inputs:** `accountId`, `subject`
+
+**Optional inputs:** `dueInDays` (default 7), `priority` (default Normal)
+
+The Task is owned by the running user (`OwnerId = UserInfo.getUserId()`), linked to the Account via `WhatId`, and created with `Status = 'Not Started'`.
+
+**Output:** `taskId`, `summary`
+
+### Action: `LinkVisitAttendeesAction`
+
+Creates `EventRelation` records linking the Contact attendees to the visit Event as invitees.
+
+**Required input:** `eventId`
+
+**Input:** `contactIds` — the list of Contact IDs returned by `UpsertVisitContactsAction`
+
+This action is called in a separate sequential step after both `log_visit` and `upsert_contacts` have completed. The `available when @variables.eventId != ""` guard in the `.agent` file enforces this sequence.
+
+If `contactIds` is empty or null (no attendees were mentioned), the action returns a clean no-op success rather than failing. The agent always calls `link_attendees` after a visit — it doesn't need to decide whether to skip it based on whether attendees were mentioned.
+
+**Output:** `count`, `summary`
 
 ---
 
-### 2. `POHPreCallBriefData.cls` — The Data Provider (the orchestrator)
+## The Agent Script File
 
-This is the class that the Prompt Template calls. Its job is to coordinate all four data fetchers and combine their output into a single structured string.
+The full agent definition lives at `force-app/main/default/aiAuthoringBundles/PG_SalesCompanion/PG_SalesCompanion.agent`.
 
-**Why a separate orchestrator class?**
-A `templateDataProvider` can only be one Apex class and can only return one output variable. Rather than trying to register four separate data providers and stitch them together in the template, this class acts as a single facade — it calls all four fetchers internally, then assembles the results into one clean block of text.
+### File structure overview
 
-**The Request/Response pattern:**
-Every Apex class in this set follows the same pattern. It declares inner `Request` and `Response` classes using `@InvocableVariable`, and an `@InvocableMethod` that takes `List<Request>` and returns `List<Response>`. This is required for both direct agent actions and for data providers. The list-in, list-out signature is a Salesforce platform requirement — even when you only ever call it with one item.
+```yaml
+system:
+    instructions: "..."   # global persona and guardrails
+    messages:
+        welcome: "..."
+        error: "..."
 
-```apex
-public class Request {
-    @InvocableVariable(required=true)
-    public String accountId;
-}
+config:
+    developer_name: "PG_SalesCompanion"
+    agent_type: "AgentforceEmployeeAgent"
 
-public class Response {
-    @InvocableVariable
-    public String Prompt;   // This is what {!$Apex:POHPreCallBriefData.Prompt} resolves to
-}
+variables:                # mutable state passed between actions
+    accountId: mutable string = ""
+    eventId:   mutable string = ""
+    contactIds: mutable list[string] = []
+
+start_agent agent_router:
+    reasoning:
+        instructions: |   # routing rules, explicit suppression of narration
+        actions:
+            go_to_briefing: @utils.transition to @subagent.pre_visit_briefing
+            go_to_logger:   @utils.transition to @subagent.post_visit_logger
+
+subagent pre_visit_briefing:
+    reasoning:
+        instructions: |   # step-by-step instructions for the planner
+        actions:
+            find_practice:    @actions.find_practice
+                with accountName = ...
+                set @variables.accountId = @outputs.accountId
+            get_pre_call_brief: @actions.get_pre_call_brief
+                with "Input:accountId" = @variables.accountId
+                available when @variables.accountId != ""
+
+    actions:
+        find_practice:
+            target: "apex://FindAccountAction"
+            inputs: ...
+            outputs: ...
+        get_pre_call_brief:
+            target: "generatePromptResponse://POH_Pre_Call_Brief"
+            inputs: ...
+            outputs: ...
+
+subagent post_visit_logger:
+    # same pattern — reasoning block + actions block
 ```
 
-The `Prompt` field name on `Response` matters — it must match the field name referenced in the merge field in the template content.
+### Key conventions
 
-**The `getBriefData` method:**
-This is the `@InvocableMethod` the platform calls. It loops through requests (in practice, always one), delegates to `buildAllData`, and packages the result.
+**Action targets:**
+- `apex://ClassName` — calls an `@InvocableMethod` on the named Apex class
+- `generatePromptResponse://TemplateName` — invokes a Prompt Template by API name
+- `standardInvocableAction://ActionName` — invokes a standard platform action (e.g., `IdentifyRecordByName`)
 
-**The `buildAllData` method — the heart of the orchestrator:**
-
-```apex
-private static String buildAllData(String accountId) {
-    // 1. Create a Request for POHGetAccountBrief and call it
-    POHGetAccountBrief.Request briefReq = new POHGetAccountBrief.Request();
-    briefReq.accountId = accountId;
-    List<POHGetAccountBrief.Response> briefResults = POHGetAccountBrief.getAccountBrief(
-        new List<POHGetAccountBrief.Request>{ briefReq }
-    );
-
-    // 2. Same pattern for visit history, order history, sampling history
-    // ...
-
-    // 3. Stitch all four outputs into labeled sections
-    List<String> sections = new List<String>{
-        'ACCOUNT: ' + accountName + ' (ID: ' + accountId + ')',
-        '',
-        '=== PRACTICE PROFILE ===',
-        accountData,
-        '',
-        '=== VISIT HISTORY — PAST 12 MONTHS ===',
-        visitData,
-        // ...
-    };
-
-    return String.join(sections, '\n');
-}
+**Variable wiring:**
+```yaml
+set @variables.accountId = @outputs.accountId
 ```
+This binds an action output to an agent-level variable, making it available to subsequent actions in the same subagent.
 
-Each sub-class is called directly as a normal Apex static method — not via the Flow/agent invocable path. This is intentional: it avoids the overhead of the invocable framework for internal calls and keeps everything in a single synchronous transaction. The sub-classes are still decorated with `@InvocableMethod` so they can also be used as standalone agent actions if needed, but `POHPreCallBriefData` bypasses that and calls them directly.
-
-The output of `buildAllData` is a plain text block with labeled section headers. Those headers (`=== PRACTICE PROFILE ===`, `=== VISIT HISTORY ===`, etc.) are what the LLM's instructions reference when it's told to write "Section 2: Visit Summary."
-
----
-
-### 3. `POHGetAccountBrief.cls` — Practice Profile Fetcher
-
-This class queries the `Account` object and formats the core practice attributes into labeled lines.
-
-**The SOQL query:**
-
-```apex
-SELECT Id, Name, BillingStreet, BillingCity, BillingState, BillingPostalCode,
-       Phone, Website,
-       Practice_Specialty__c,
-       Number_of_DDS__c, Number_of_RDH__c,
-       Dispenses_Power__c, Dispenses_Manual__c,
-       Recommends_Power__c, Recommends_Manual__c,
-       Competitor_Brands_Seen__c,
-       Last_iO_Sample_Date__c,
-       AI_Sales_Companion_Recommendation__c
-FROM Account
-WHERE Id IN :accountIds
+**Conditional availability:**
+```yaml
+available when @variables.accountId != ""
 ```
+This guard prevents an action from being offered to the planner until its dependency is satisfied. Without it, the planner may attempt to call `log_visit` before account resolution completes.
 
-The method collects all incoming `accountId` values into a `Set<Id>` first, then runs a single query for all of them at once. This is intentional: `@InvocableMethod` is designed to be bulkified, meaning Salesforce may batch multiple records through the same call. By querying once with `WHERE Id IN :accountIds`, the class handles bulk execution correctly and avoids SOQL-in-a-loop issues.
-
-**Address formatting:**
-The billing address parts are conditionally built. Each field is only added if it's not blank, then joined with commas. This avoids output like `Address: , Loveland, , 45140` when partial address data exists.
-
-**Dispensing/recommending — the helper method:**
-Power and Manual dispensing/recommending each come from separate boolean fields. Rather than repeating the same conditional logic four times, a private helper `buildDispenseRecommendLine(Boolean power, Boolean manual)` handles both cases:
-
-```apex
-private static String buildDispenseRecommendLine(Boolean power, Boolean manual) {
-    List<String> items = new List<String>();
-    if (power == true)  items.add('Oral-B Power');
-    if (manual == true) items.add('Oral-B Manual');
-    return items.isEmpty() ? 'Neither Power nor Manual' : String.join(items, ', ');
-}
+**List types:**
+Use `list[string]` for string lists. The `complex_data_type_name: "lightning__textType"` annotation is required for any `list[string]` input or output:
+```yaml
+attendees: list[string]
+    description: "..."
+    complex_data_type_name: "lightning__textType"
 ```
+Without `complex_data_type_name`, the bundle will fail to publish with a schema validation error.
 
-The explicit `== true` check is important in Apex — checkbox fields can be `null` on unconfigured records, and `null == true` evaluates to `false`, so this is safe. But checking `if (power)` when `power` is `null` would throw an exception in some contexts.
-
-**Output:**
-A newline-joined block like:
-```
-Address: 8974 Columbia Rd, Loveland, OH, 45140
-Specialty: General Practice
-Dentists (DDS): 2
-Hygienists (RDH): 3
-Dispenses: Oral-B Power, Oral-B Manual
-Recommends: Oral-B Power
-Competitor Brands Seen: Sonicare
-Last iO Sample Date: 2/23/2022
-AI Sales Companion Recommendation: Focus on iO conversion...
-```
-
----
-
-### 4. `POHGetVisitHistory.cls` — Visit History Fetcher
-
-This is the most complex of the four fetchers because attendee resolution requires two separate queries.
-
-**The main Event query:**
-
-```apex
-SELECT Id, Subject, StartDateTime, EndDateTime, Description,
-       Visit_Notes__c, Samples_Left_Summary__c, WhoId
-FROM Event
-WHERE WhatId = :accountId
-AND StartDateTime >= :cutoffDT
-ORDER BY StartDateTime DESC
-```
-
-`WhatId` links the Event to the Account. `WhoId` is the "primary contact" — the one contact directly entered on the event record. But a sales rep typically sees multiple people at a visit. Those additional attendees are not on the Event record itself; they're in a separate object called `EventRelation`.
-
-**The EventRelation query — resolving all attendees:**
-
-```apex
-List<EventRelation> relations = [
-    SELECT EventId, RelationId
-    FROM EventRelation
-    WHERE EventId IN :eventIds
-    AND IsInvitee = true
-    AND RelationId != null
-];
-```
-
-`EventRelation` is a junction object between Events and Contacts/Leads. `IsInvitee = true` filters to the added attendees (as opposed to the event owner or other non-invitee relations). The result is built into a `Map<Id, List<Id>>` — event ID to a list of additional contact IDs — so that when formatting the most recent visit, the code can look up all attendees by event.
-
-All contact IDs (from both `WhoId` and `EventRelation`) are accumulated in a single `Set<Id>` and resolved with one Contact query. Contact names are then formatted as `First Last (Title)` where a title exists.
-
-**Output structure:**
-The most recent visit gets a detailed block — date, duration, full attendee list with titles, notes from `Visit_Notes__c` (falling back to the standard `Description` field if the custom field is blank), and samples left. Every prior visit gets a compact single line with date and a truncated note excerpt.
-
-```
-Total visits in window: 4
-Lookback window: past 365 days (since 4/30/2025)
-
-MOST RECENT VISIT:
-  Date: 3/3/2026 2:10 PM
-  Duration: 3/3/2026 2:10 PM to 3/3/2026 2:30 PM (20 min)
-  Attendees: Megan Smith (RDH), Kristy Jones, Julie Brown (DDS)
-  Notes: Discussed power dispensing and iO integration into hygiene instructions.
-  Samples left: 12 tubes Crest Gum Detoxify
-
-PREVIOUS VISITS (3):
-  - 12/15/2025: Reviewed ship plan renewal and whitespace promo.
-  - 9/4/2025: iO demo with new hygienist.
-  - 6/18/2025: Routine check-in, no notes recorded.
-```
-
-**The `lookbackDays` parameter:**
-`POHPreCallBriefData` passes `lookbackDays = 365` when calling this class. The parameter exists so the class can be reused for other windows (e.g., a 90-day "recent activity" call) without modifying the code.
-
----
-
-### 5. `POHGetOrderHistory.cls` — Order and Ship Plan History Fetcher
-
-This class queries the custom `Order_Item__c` object and produces two sections: a grouped summary of the past 12 months of orders, and a line-by-line list of upcoming ship plan orders.
-
-**The query window:**
-
-```apex
-Date pastCutoff   = Date.today().addDays(-365);
-Date futureCutoff = Date.today().addDays(365);
-
-SELECT ... FROM Order_Item__c
-WHERE Account__c = :accountId
-AND Order_Date__c >= :pastCutoff
-AND Order_Date__c <= :futureCutoff
-```
-
-Both past and future records are pulled in a single query. They're split after retrieval using `Is_Future_Order__c` — a checkbox on the object that marks planned ship plan deliveries that haven't happened yet.
-
-**Grouping past orders by product family and ship plan type:**
-Rather than listing every individual order line (which could be dozens), past orders are aggregated into a nested map:
-
-```
-Map<String, Map<String, Decimal>>
-     │               │         └─ total quantity
-     │               └─ ship plan type (e.g., "Manual Ship Plan")
-     └─ product family (e.g., "Power", "Manual", "Paste")
-```
-
-This produces output like:
-```
-  Power | Manual Ship Plan: 3744 units
-  Paste | One-Time: 48 units
-  Floss | Manual Ship Plan: 240 units
-```
-
-**Ship plan detection:**
-After grouping, the code does a separate pass to check whether any past order has `Ship_Plan_Type__c` of `'Manual Ship Plan'` or `'Auto Ship Plan'`. If found, it surfaces the plan type. If not found, it flags that no active ship plan was detected — which is information the LLM is instructed to call out as a recommendation opportunity.
-
-**Future orders:**
-Each future order item is listed individually with date, product name, quantity, and plan type. The product name resolution prioritizes `Product_Name__c` (the denormalized text field) over the lookup to `Product2.Name` — this handles cases where the product name was entered as free text and isn't linked to a catalog record.
-
----
-
-### 6. `POHGetSamplingHistory.cls` — Sampling History Fetcher
-
-This class queries the same `Order_Item__c` object as the order history fetcher, but filters to records where `Ship_Plan_Type__c = 'Sample Drop'` within the past 24 months. The longer lookback window (730 days vs 365 days for orders) reflects the customer's specific business rule: an Oral-B iO sample drop is considered stale if it hasn't happened within two years.
-
-**The iO stale detection logic:**
-
-```apex
-Date lastIODate = null;
-
-for (Order_Item__c s : samples) {
-    // Track the most recent Power-family sample drop
-    if (family == 'Power' && s.Order_Date__c != null) {
-        if (lastIODate == null || s.Order_Date__c > lastIODate) {
-            lastIODate = s.Order_Date__c;
-        }
-    }
-}
-
-// After the loop, evaluate staleness
-Integer daysSince = lastIODate.daysBetween(Date.today());
-Boolean isStale = daysSince > 730;
-```
-
-The `Power` family is used as the proxy for Oral-B iO samples because iO is the Power flagship product. If the last Power-family sample drop was more than 730 days ago, a warning is included in the output:
-
-```
-WARNING — iO sample is STALE (over 2 years ago). Recommend re-sampling any hygienists
-hired since then or reps whose iO battery may no longer hold charge.
-```
-
-This warning is then picked up by the LLM in Section 4 of the brief, which is instructed to explicitly flag stale iO sampling opportunities and suggest targeting new hygienists or those with aging battery life.
-
-If no Power-family sample drop exists at all in the 24-month window, the output says the iO has not been sampled in the recorded window — also surfaced as a flag.
+**Routing narration:** The router's instructions must explicitly say the agent should never announce its routing decision. Without this instruction, the LLM will narrate transitions ("Routing you to the post-visit logger...") rather than transitioning silently.
 
 ---
 
@@ -338,90 +345,130 @@ If no Power-family sample drop exists at all in the 24-month window, the output 
 
 ### Custom Object: `Order_Item__c`
 
-This object represents individual product line items for both historical orders and future ship plan deliveries.
-
 | Field | Type | Purpose |
-|-------|------|---------|
+|---|---|---|
 | `Account__c` | Lookup(Account) | Links the order to the dental practice |
-| `Product__c` | Lookup(Product2) | Optional link to the product catalog |
-| `Product_Name__c` | Text | Denormalized product name for display (preferred over the lookup) |
-| `Product_Family__c` | Text | Product family: Power, Manual, Paste, Floss, etc. |
-| `Quantity__c` | Number | Units ordered or planned |
-| `Order_Date__c` | Date | Date of the order or scheduled ship plan delivery |
-| `Ship_Plan_Type__c` | Picklist | Manual Ship Plan, Auto Ship Plan, Sample Drop, One-Time |
+| `Product__c` | Lookup(Product2) | Optional catalog link |
+| `Product_Name__c` | Text 255 | Denormalized product name (preferred for display) |
+| `Product_Family__c` | Picklist | Power; Manual; Paste; Floss; Whitening; Waterflosser |
+| `Quantity__c` | Number(10,0) | Units ordered |
+| `Order_Date__c` | Date | Order or scheduled delivery date |
+| `Ship_Plan_Type__c` | Picklist | Manual Ship Plan; Auto Ship Plan; Sample Drop; One-Time |
 | `Is_Future_Order__c` | Checkbox | True for upcoming ship plan orders not yet fulfilled |
 
 ### Custom Fields on `Account`
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `Practice_Specialty__c` | Text | GP, Pediatric, Periodontal, etc. |
-| `Number_of_DDS__c` | Number | Count of dentists at the practice |
-| `Number_of_RDH__c` | Number | Count of hygienists at the practice |
-| `Dispenses_Power__c` | Checkbox | Practice sells Oral-B Power brushes to patients |
-| `Dispenses_Manual__c` | Checkbox | Practice sells Oral-B Manual brushes to patients |
-| `Recommends_Power__c` | Checkbox | Practice recommends Oral-B Power to patients |
-| `Recommends_Manual__c` | Checkbox | Practice recommends Oral-B Manual to patients |
-| `Competitor_Brands_Seen__c` | Text | Competitor brands observed in the office (e.g., Sonicare) |
-| `Last_iO_Sample_Date__c` | Date | Date of the most recent Oral-B iO sample drop |
-| `AI_Sales_Companion_Recommendation__c` | Long Text | Pre-populated AI-generated recommendation field |
+**Demographics**
+
+| Field | Type |
+|---|---|
+| `Practice_Specialty__c` | Picklist (General Practice; Pediatric; Periodontal; Orthodontic; Endodontic; Other) |
+| `Number_of_Dentists__c` | Number(3,0) |
+| `Number_of_Hygienists__c` | Number(3,0) |
+| `Number_of_Ortho_Pedo__c` | Number(3,0) |
+| `Number_of_Weekly_Patients__c` | Number(5,0) |
+
+**Office Dispense (multi-select picklists)**
+
+| Field | Values |
+|---|---|
+| `Office_Dispense_Power__c` | Does Not Dispense; Oral B; Sonicare; Other; Unknown |
+| `Office_Dispense_Manual__c` | Does Not Dispense; Oral B; Colgate; Butler; Other; Unknown |
+| `Office_Dispense_Paste__c` | Does Not Dispense; Crest; Colgate; Sensodyne; Other; Unknown |
+| `Office_Dispense_Whitening__c` | Does Not Dispense; White Strips; Daily Serum; Opalescence; Zoom; Other; Unknown |
+| `Office_Dispense_Waterflosser__c` | Does Not Dispense; Oral B; Waterpik; Other; Unknown |
+
+**Office Recommends (multi-select picklists)**
+
+| Field | Values |
+|---|---|
+| `Office_Recommends_Whitening__c` | White Strips; Daily Serum; Opalescence; Zoom; Other; Unknown |
+| `Office_Recommends_Waterflosser__c` | Oral B; Waterpik; Other; Unknown |
+
+**Ship Plan**
+
+| Field | Type |
+|---|---|
+| `Ship_Plan_Status__c` | Picklist (Not Enrolled; Pending; Active; Cancelled) |
+| `Ship_Plan_Product__c` | Text 255 |
+| `Ship_Plan_Cadence__c` | Text 80 |
+
+**Briefing fields**
+
+| Field | Type |
+|---|---|
+| `Competitor_Brands_Seen__c` | Long Text 1000 |
+| `Last_iO_Sample_Date__c` | Date |
+| `AI_Sales_Companion_Recommendation__c` | Long Text 32768 |
 
 ### Custom Fields on `Activity` (Event/Task)
 
+These fields must be deployed against the `Activity` object in the metadata, not `Event` directly. The file path is `force-app/main/default/objects/Activity/fields/`, and the `<fullName>` in each XML file contains only the field name (e.g., `Visit_Notes__c`), not a qualified prefix.
+
 | Field | Type | Purpose |
-|-------|------|---------|
-| `Visit_Notes__c` | Long Text | Detailed notes from the sales call |
-| `Samples_Left_Summary__c` | Text | Free-text description of samples left (e.g., "12 tubes Crest Gum Detoxify") |
+|---|---|---|
+| `Visit_Notes__c` | Long Text 32768 | Full narrative notes from the visit |
+| `Samples_Left_Count__c` | Number(5,0) | Units of product left at the office |
+| `Samples_Left_Product__c` | Text 255 | Product name of samples left |
+| `Prescheduled__c` | Checkbox | True if the visit was scheduled in advance |
+
+**Event Record Type:** `Office_Visit` — assign this record type in `LogOfficeVisitAction`. Create a dedicated page layout (`Event-Office Visit Layout`) and assign it to this record type for each profile in scope. Without the page layout assignment, events open on the default calendar layout which doesn't show the custom fields.
 
 ---
 
-## Implementation Notes for the Partner
-
-### Deployment Order
-
-The Prompt Template has a hard dependency on the Apex data provider. Always deploy in this sequence:
+## Deployment Order
 
 ```
-1. Create the Order_Item__c object and all custom fields
-2. Deploy all five Apex classes
-3. Deploy the Prompt Template
-4. Wire the Prompt Template as an action in your agent topic
+1.  Deploy Account custom fields
+2.  Deploy Activity (Event) custom fields
+3.  Deploy Order_Item__c custom object and fields
+4.  Deploy Event record type (Office_Visit) and page layout
+5.  Deploy all Apex classes (pre-call data providers + post-call actions)
+6.  Deploy the POH_Pre_Call_Brief Prompt Template
+7.  Deploy the PG_Sales_Companion_User permission set
+8.  Generate and publish the authoring bundle:
+        sf agent publish authoring-bundle --api-name PG_SalesCompanion --target-org <alias>
 ```
 
-### Wiring the Prompt Template as an Agent Action
+The Prompt Template has a hard compile-time dependency on the Apex data provider. Deploy the Apex before the template.
 
-In your agent's pre-call topic, define the action using this exact syntax:
+The permission set must grant:
+- Read + Edit FLS on all custom Account, Activity (Event), and Order_Item__c fields
+- CRUD on `Order_Item__c`
+- Apex class access on all 10 invocable classes and `POHPreCallBriefData`
+- Visibility on the published agent (the `GenAiPlugin` and `GenAiPlanner` records created at publish time)
 
+---
+
+## Known Platform Considerations
+
+**Activity field deployment path.** Custom fields for `Event` must be deployed under the `Activity` object path, not `Event` directly. Use `force-app/main/default/objects/Activity/fields/`. Deploying under `Event/fields/` will fail with a restricted picklist error.
+
+**`IdentifyRecordByName` availability.** The standard account resolution action may fail to register during authoring bundle creation in some orgs (the error surfaces during `GenAiFunctionDefinition` creation at publish time). If this happens, `FindAccountAction` is a drop-in replacement. The action description, inputs, and outputs are designed so the agent's reasoning instructions require no changes — just swap the `target`.
+
+**`list[string]` encoding.** When the LLM passes a `list[string]` value through `lightning__textType`, pipe characters may appear appended to list items (e.g., `"Megan||"` instead of `"Megan"`). Sanitize all `list[string]` inputs in Apex before processing: `name.trim().replaceAll('\\|', '').trim()`.
+
+**Multi-select picklist fields in compact layouts.** Multi-select picklist fields cannot be added to compact layouts. The Salesforce platform will return a validation error during deployment if one is included. Compact layout fields must be simple text, number, picklist, date, or checkbox types.
+
+**Event record type + page layout assignment.** Creating a new Event record type requires a corresponding page layout and an explicit assignment of that layout to the record type for each profile in scope. This is done via the `layoutAssignments` block in the profile metadata file:
+```xml
+<layoutAssignments>
+    <layout>Event-Office Visit Layout</layout>
+    <recordType>Event.Office_Visit</recordType>
+</layoutAssignments>
 ```
-actions:
-    get_pre_call_brief:
-        description: "Generates a complete pre-call account brief. Call this when the rep
-                       asks to be briefed, prepped, or wants an account summary."
-        inputs:
-            "Input:accountId": string
-                description: "Salesforce Account ID of the target practice"
-                is_required: True
-        outputs:
-            promptResponse: string
-                is_used_by_planner: True
-                is_displayable: True
-        target: "generatePromptResponse://POH_Pre_Call_Brief"
-```
+Without this, the record type is active but events open on the default calendar layout.
 
-The `Input:accountId` naming convention is required — Prompt Template inputs are always referenced as `Input:<fieldApiName>` in Agent Script. The `promptResponse` output variable is what Agentforce surfaces to the user.
+---
 
-### Adapting to a Different Data Schema
+## Adapting to a Different Data Schema
 
-If the customer tracks orders differently than the `Order_Item__c` model above, the two classes that need updating are `POHGetOrderHistory.cls` and `POHGetSamplingHistory.cls`. The SOQL queries and field references in `buildSummary()` in both classes are the only things that need to change — the output string format, the section headers, and the rest of the orchestration in `POHPreCallBriefData` can stay as-is.
+**Pre-call briefing:** Modify `POHGetAccountBrief.cls` (Account field SOQL + output formatting), `POHGetVisitHistory.cls` (Event field SOQL), `POHGetOrderHistory.cls` and `POHGetSamplingHistory.cls` (Order_Item__c SOQL). The orchestrator (`POHPreCallBriefData`) and section structure are stable — only the SOQL queries and field mappings inside each class need to change.
 
-For account custom fields, update the SOQL in `POHGetAccountBrief.cls` and the corresponding output lines in the same class.
+**Post-call logging:** Each action is a single class with its SOQL and DML inline. The `UpdateAccountAttributesAction` is the most likely to need updates — add or remove `@InvocableVariable` fields and corresponding `if (input != null)` blocks to match the actual Account field schema. The `replaceMulitSelect` / `mergeMultiSelect` pattern is reusable as-is for any multi-select picklist field.
 
-### Prompt Template Version Identifier
-
-The `versionIdentifier` and `activeVersionIdentifier` fields in the XML must use a specific Base64-encoded SHA-256 hash format followed by `_1`. If you recreate or modify the template and need to generate a new identifier:
-
+**Prompt Template version identifier:** The `versionIdentifier` and `activeVersionIdentifier` fields require a Base64-encoded SHA-256 hash followed by `_1`. When creating or significantly modifying the template:
 ```bash
 python3 -c "import base64, hashlib; h = hashlib.sha256(b'your-unique-string').digest(); print(base64.b64encode(h).decode() + '_1')"
 ```
-
-Use any unique string as the input — the developer name of the template is a good choice.
+Use the template's developer name or any stable unique string as input.
