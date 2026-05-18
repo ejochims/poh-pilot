@@ -5,7 +5,7 @@ This repo contains the Apex classes, Prompt Template, and Agent Script source th
 - **Pre-visit briefing** — the rep asks to be briefed on a dental practice before walking in; the agent returns a grounded 6-section narrative with no hallucination risk
 - **Post-visit logging** — the rep dictates a paragraph after leaving a practice; the agent resolves the account, logs the Event, links attendees, updates Account intelligence, and creates follow-up Tasks in one conversational turn
 
-A third flow (Product Q&A) is stubbed and ready to wire.
+A third flow (Product Q&A) is stubbed and ready to wire. For a phase-two content-search option, see `specs/Mediafly-Agent-Action-Walkthrough.md`, which describes how to connect Mediafly's Launchpad API to a separate Agentforce action that returns direct links to sales assets without duplicating content in Salesforce.
 
 ---
 
