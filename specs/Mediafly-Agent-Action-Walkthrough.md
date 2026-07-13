@@ -1,5 +1,7 @@
 # Mediafly Agent Action Walkthrough
 
+> **Just want to install it?** Follow the step-by-step runbook in [`Mediafly-Setup-Guide.md`](Mediafly-Setup-Guide.md). This document is the design rationale and API reference behind that guide.
+
 This guide describes a phase-two path for connecting the P&G Sales Companion to Mediafly. The goal is Level 1 content retrieval: a rep asks for sales materials, the agent searches Mediafly, and the agent returns a short ranked list of direct links back to Mediafly.
 
 Mediafly remains the source of truth. Salesforce does not duplicate the content library, and Agentforce does not answer from inside the documents in this level of the integration.

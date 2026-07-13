@@ -1,0 +1,144 @@
+# Mediafly Integration — Setup Guide (Start Here)
+
+This is the paint-by-numbers guide for standing up the **Level 1 Mediafly content search** in a Salesforce org. Follow the phases top to bottom. Every step maps to the exact names used in the reference code, so you can copy values straight across.
+
+- **What you get when done:** a rep asks the P&G Sales Companion for materials ("what do I have for Oral-B iO hygienist training?") and the agent returns a short ranked list of Mediafly assets with direct links.
+- **What this does NOT do:** answer questions from inside a PDF/deck/video. Mediafly's API returns asset metadata and links only. See `Mediafly-Agent-Action-Walkthrough.md` for the why.
+- **Time estimate:** ~2–3 hours of Salesforce config once you have the Mediafly values from Phase 1.
+
+If you want the design rationale and API details, read `Mediafly-Agent-Action-Walkthrough.md`. This guide is just the steps.
+
+---
+
+## Phase 1 — Get these values from Mediafly
+
+Request these from your Mediafly rep before you start. You cannot finish without them.
+
+| # | You need | Where it plugs in later |
+|---|----------|-------------------------|
+| 1 | A dedicated **service-account** username + password (not a rep's login) | External Credential principal (Phase 3) |
+| 2 | The **Company Code** for the P&G tenant | `Mediafly_Config__mdt.Company_Code__c` (Phase 4) |
+| 3 | The **productId** (UUID) for the P&G environment | `Mediafly_Config__mdt.Product_Id__c` (Phase 4) |
+| 4 | The **Accounts API base URL** (token host) | `Mediafly_Accounts` Named Credential URL (Phase 3) |
+| 5 | The **Launchpad API base URL** (e.g. `https://launchpadapi.mediafly.com`) | `Mediafly_Launchpad` Named Credential URL (Phase 3) |
+| 6 | The exact **token endpoint path** and the **token field name** in the response | Two `TODO`s in `MediaflyAuthService.cls` (Phase 5) |
+| 7 | Confirmation of **direct-link behavior** — do reps need to be logged into Mediafly for links to open? | Informs the rep experience; no code change |
+
+> Two open auth questions worth asking at the same time (see the walkthrough spec): (a) does Mediafly offer an enterprise OAuth / delegated-token option beyond the public docs, and (b) does P&G need per-rep content scoping? If "same content library for everyone" is fine, the service-account model in this guide is correct as-is.
+
+---
+
+## Phase 2 — Copy the code into your project
+
+Copy these four files from this repo into your SFDX project (e.g. `force-app/main/default/classes/` and your agent bundle). They are reference files with no `-meta.xml` — add the standard Apex class meta files as you copy them in.
+
+- `apex/SearchMediaflyContentAction.cls`
+- `apex/MediaflyAuthService.cls`
+- `apex/MediaflyConfig.cls`
+- `agent/PG_SalesCompanion.agent` (the `mediafly_content_search` subagent + router transition — Phase 6)
+
+---
+
+## Phase 3 — Create the credentials (no secrets in code)
+
+You will create **two** Named Credentials. The service-account username/password live here, never in Apex.
+
+**3a. Accounts (token) credential — `Mediafly_Accounts`**
+1. Setup → Named Credentials → **External Credentials** → New.
+   - Label / Name: `Mediafly_Accounts`
+   - Authentication Protocol: **Basic Authentication** (Custom, if your token call needs Basic; confirm against Mediafly docs from Phase 1 #6).
+2. Add a **Principal** and enter the service-account **username** and **password** from Phase 1 #1.
+3. Setup → Named Credentials → **Named Credentials** → New.
+   - Label / Name: **`Mediafly_Accounts`** (must match exactly — the code calls `callout:Mediafly_Accounts`)
+   - URL: the Accounts API base URL from Phase 1 #4
+   - Link it to the External Credential above.
+
+**3b. Launchpad (search) credential — `Mediafly_Launchpad`**
+4. Create a Named Credential named **`Mediafly_Launchpad`** (the code calls `callout:Mediafly_Launchpad`).
+   - URL: the Launchpad base URL from Phase 1 #5
+   - The code attaches the Bearer token itself, so this credential does not need its own auth principal (set "No Authentication" / anonymous, allowing the code to set the `Authorization` header).
+
+> Names must match exactly: `Mediafly_Accounts` and `Mediafly_Launchpad`. The Apex references them as `callout:Mediafly_Accounts` and `callout:Mediafly_Launchpad`.
+
+---
+
+## Phase 4 — Create the config metadata
+
+1. Setup → **Custom Metadata Types** → New.
+   - Label: `Mediafly Config`  •  Object Name: **`Mediafly_Config`** (API name becomes `Mediafly_Config__mdt`)
+2. Add these custom fields:
+   - `Company_Code__c` — Text
+   - `Product_Id__c` — Text
+   - `Api_Version__c` — Number (0 decimals)
+3. Manage Records → New. Set **Label** and **DeveloperName** to exactly **`Default`** (the code calls `getInstance('Default')`).
+   - `Company_Code__c` = Phase 1 #2
+   - `Product_Id__c` = Phase 1 #3
+   - `Api_Version__c` = `3` (unless Mediafly says otherwise)
+
+---
+
+## Phase 5 — Confirm the two token TODOs
+
+Open `MediaflyAuthService.cls` and resolve the two `TODO` markers using the Mediafly docs from Phase 1 #6:
+
+1. **Token endpoint path** — line with `req.setEndpoint(ACCOUNTS_NAMED_CREDENTIAL + '/tokens');`. Change `/tokens` to the real Accounts API token path if different.
+2. **Token field name** — line with `String token = (String) body.get('accessToken');`. Change `accessToken` to whatever field name the Accounts API returns the token in.
+
+Also confirm whether the token call needs the `X-Company-Code` header (already sent) or the Company Code in the body/URL, and adjust if needed.
+
+---
+
+## Phase 6 — Create the Platform Cache partition
+
+The ~1-hour token is cached and reused across reps. Without this, the code still works (it falls back to fetching a token each call) but is slower.
+
+1. Setup → **Platform Cache** → New Platform Cache Partition.
+   - Name: **`Mediafly`** (must match — the code calls `Cache.Org.getPartition('Mediafly')`)
+   - Allocate a small **Org** cache capacity (even 1 MB is plenty).
+
+---
+
+## Phase 7 — Wire the agent + grant access
+
+1. Import / merge the `mediafly_content_search` subagent and the router's `go_to_mediafly_content` transition from `agent/PG_SalesCompanion.agent` into your agent.
+2. Confirm the action target resolves: `search_mediafly_content` → `apex://SearchMediaflyContentAction`.
+3. Grant the agent's running user (and any test users) **Apex class access** to `SearchMediaflyContentAction`, `MediaflyAuthService`, and `MediaflyConfig` via a permission set.
+4. Deploy everything and activate the agent version.
+
+---
+
+## Phase 8 — Test
+
+Run these in the agent's live-action preview:
+
+```text
+What materials do I have for Oral-B iO hygienist training?
+Pull up the Gingivitis ER sell sheet.
+Find assets for Crest Gum Detoxify.
+Do we have a video I can share about iO patient outcomes?
+```
+
+**Definition of done:**
+- The router sends these to `mediafly_content_search` (not briefing or logging).
+- You get a short ranked list (≤ 3–5) of real Mediafly assets, each with a link.
+- A nonsense search returns a polite "refine your search" message, not an error.
+- Tapping a link opens the asset in Mediafly.
+
+---
+
+## Phase 9 — Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| "Unable to authenticate with Mediafly" | Wrong token path/field, or bad service-account creds | Recheck Phase 5 TODOs and the `Mediafly_Accounts` principal |
+| "I could not reach Mediafly just now" (non-401) | Wrong Launchpad URL, missing `productId`, or callout not allowed | Verify `Mediafly_Launchpad` URL + `Product_Id__c`; confirm the org allows the callout |
+| Every search returns no results | `productId` wrong, or service account lacks content permissions | Confirm Phase 1 #3 and the service account's library access |
+| Repeated auth on every call / slow | Platform Cache partition missing or misnamed | Create the `Mediafly` Org partition (Phase 6) |
+| Links prompt a login | Direct-link behavior requires an active Mediafly session | Expected — reps should be signed into Mediafly (Phase 1 #7) |
+
+---
+
+## Security checklist (before you commit anything)
+
+- No service-account username/password, token, `productId`, or Company Code in Apex, the agent script, or source control — all of it lives in Named Credentials and `Mediafly_Config__mdt`.
+- The action never returns raw tokens, exceptions, or HTTP bodies to the rep.

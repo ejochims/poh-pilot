@@ -8,6 +8,8 @@ This repo contains the Apex classes, Prompt Template, and Agent Script source th
 A third flow (**Mediafly content search**) is included as a Level 1 reference implementation: the rep asks for sales materials and the agent searches Mediafly's Launchpad API and returns direct links to the matching assets, with Mediafly staying the single source of truth (no content duplicated into Salesforce). See `specs/Mediafly-Agent-Action-Walkthrough.md` for the full walkthrough, including the **authentication decision** used — a single dedicated Mediafly service-account identity, chosen because the public Mediafly API supports no OAuth/delegated per-rep token flow — the API constraint that keeps this at "find & link" rather than answering from inside assets, and the open questions to confirm with Mediafly.
 
 > The Mediafly content-search action calls out to Mediafly and requires credentials, a `productId`, and a Company Code that must be provisioned by Mediafly. The reference classes ship with placeholders and `TODO` markers; they are meant to be adapted in your org, not deployed as-is.
+>
+> **Setting it up? Start with the step-by-step runbook: [`specs/Mediafly-Setup-Guide.md`](specs/Mediafly-Setup-Guide.md).** It walks the whole install in order (what to get from Mediafly, credentials, config, code, agent wiring, testing, troubleshooting). Read [`specs/Mediafly-Agent-Action-Walkthrough.md`](specs/Mediafly-Agent-Action-Walkthrough.md) for the design rationale and API details.
 
 ---
 
