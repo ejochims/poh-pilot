@@ -93,9 +93,49 @@ The `SearchRequest` model includes equivalent lower-camel fields such as:
 }
 ```
 
-Search responses include a wrapper with `success`, `message`, `response`, and `errorCode`. The response contains result items, total result count, offsets, optional facets, optional scoring explanations, and item-level search scoring fields. Item links are exposed through `link.href`.
+Search responses include a wrapper with `success`, `message`, `response`, and `errorCode`. The response contains result items (`ItemModel`), total result count, offsets, optional facets, optional scoring explanations, and item-level search scoring fields. Item links are exposed through `link.href`.
+
+What the search API returns — and what it does not:
+
+- Each `ItemModel` carries a free-form `metadata` dictionary (title, description, and whatever custom attributes P&G configured), a `type`, a `link`/`href`, a `thumbnail`, an `asset` file reference, and relevance scores.
+- The Launchpad search API does **not** return the text inside documents — there is no full-text, transcript, OCR, or extracted-content field, and no content-extraction endpoint anywhere in the public API.
+
+This is the hard constraint behind the Level 1 scope: the agent can discover and link to assets and surface their metadata, but it cannot answer questions from inside a PDF, deck, or video without a separate content-ingestion workstream (see the Level 2 section). Keeping the integration at Level 1 is also exactly what avoids duplicating Mediafly content into Salesforce.
 
 Launchpad calls use bearer-token security. The token is obtained through the Mediafly Accounts API or provided by a Mediafly customer representative. The customer thread described an Accounts API authentication flow that exchanges service-account credentials for a session token that is valid for one hour. Confirm the exact endpoint, request shape, and token field with the current Mediafly Accounts API documentation before implementation.
+
+## Authentication Decision
+
+Mediafly content APIs use a two-step, two-surface auth model:
+
+```mermaid
+flowchart LR
+    Apex[Apex action] -->|"1. Basic Auth: username:password + Company Code"| Accounts[Mediafly Accounts API]
+    Accounts -->|"Access Token (~1 hour)"| Apex
+    Apex -->|"2. Bearer <token>"| Launchpad[Launchpad /items/search]
+    Launchpad -->|ranked assets + link.href| Apex
+```
+
+1. A Mediafly **user's** username/password is sent as HTTP Basic Auth to the Accounts API, which returns an Access Token valid for about one hour.
+2. That token is sent as `Authorization: Bearer <token>` on every Launchpad search call. Launchpad has no login endpoint of its own; it only consumes the token.
+
+**Decision used for this pilot: a single dedicated Mediafly service-account identity.**
+
+This is a deliberate choice, not just a default. Confirming P&G's preferred auth model up front was not feasible, so the integration is built on the option that the public Mediafly API actually supports for a server-side (Apex) integration:
+
+- Mediafly has no separate "service account" API type. Every token is minted from a specific Mediafly **user's** credentials and is scoped to that user's content permissions. A "service account" here simply means a regular Mediafly user account dedicated to this integration.
+- The public Launchpad and Accounts APIs expose **no OAuth, delegated, on-behalf-of, or token-exchange flow**, and no SCIM/user API. SAML SSO governs interactive login to the Mediafly app only; it does not mint per-user API tokens programmatically.
+- True **per-rep** API auth would therefore require storing each rep's Mediafly username/password server-side (a security liability that also breaks on every password reset) or an interactive per-rep auth step the API does not support. Neither is viable for an Agentforce action.
+
+**What this trade-off means:**
+
+- All rep searches run under one Mediafly identity, so results reflect that account's content permissions, and Mediafly attributes all API search/engagement analytics to the service account (no per-rep attribution on the API side).
+- The per-rep layer still exists at the click, not the query: when the rep taps a returned `link.href`, the asset opens under the rep's own Mediafly app/browser session (the interactive SSO surface), so content access on open can remain rep-scoped.
+
+**Open questions to confirm with Mediafly when possible (non-blocking for Level 1):**
+
+- Does Mediafly offer an enterprise OAuth or delegated-token option beyond the public docs that would allow rep-scoped tokens? If so, per-rep search becomes possible.
+- Does P&G actually require per-rep content scoping or per-rep engagement attribution? If every pilot rep should see the same POH content library, the service-account model is the correct, simpler choice rather than a limitation.
 
 ## Salesforce Configuration Pattern
 
@@ -120,6 +160,17 @@ Service account password: <MEDIAFLY_SERVICE_ACCOUNT_PASSWORD>
 ```
 
 The Mediafly access token should be reused until expiration. The customer thread described a one-hour token lifetime, so the implementation should refresh only when the token is missing, expired, or rejected by Launchpad.
+
+## Reference Implementation In This Repo
+
+This repo now includes a Level 1 reference implementation you can adapt in your own org:
+
+- `apex/SearchMediaflyContentAction.cls` — the invocable search action wired to the `mediafly_content_search` subagent.
+- `apex/MediaflyAuthService.cls` — the two-step service-account token helper (Basic → token → Bearer) with Platform Cache token reuse.
+- `apex/MediaflyConfig.cls` — reads `Mediafly_Config__mdt` (Company Code, Product Id, API version) so no tenant values are hardcoded.
+- `agent/PG_SalesCompanion.agent` — the `mediafly_content_search` subagent and the router's `go_to_mediafly_content` transition.
+
+These are reference classes (no `-meta.xml`, no tests) meant to be copied into an SFDX project. The endpoint token path and token field name in `MediaflyAuthService` are marked `TODO` because they must be confirmed against the Mediafly Accounts API for the target tenant. Configure the `Mediafly_Accounts` and `Mediafly_Launchpad` credentials and the `Mediafly_Config__mdt` record before use. The contract below documents the action's shape.
 
 ## Invocable Action Contract
 
@@ -229,12 +280,7 @@ Keep the real implementation consistent with the current repo's invocable patter
 
 ## Agentforce Wiring
 
-The current agent has a `product_qa` stub. There are two reasonable phase-two wiring options:
-
-1. Add a dedicated `mediafly_content_search` subagent.
-2. Extend `product_qa` so it can call Mediafly when the rep asks for sales materials.
-
-For the cleanest demo story, prefer a dedicated content-search subagent. Product Q&A can remain reserved for answering product questions from structured product knowledge, while Mediafly search is explicitly about retrieving assets.
+This repo implements the dedicated-subagent option: the former `product_qa` stub has been replaced with a `mediafly_content_search` subagent, and the router's `go_to_mediafly_content` transition sends content/asset requests to it. Keeping content search as its own subagent (rather than overloading a general product-Q&A topic) keeps the behavior deterministic and easy to demo: the subagent's only job is to search Mediafly and return links.
 
 Suggested router rule:
 
@@ -254,8 +300,8 @@ search_mediafly_content:
             is_required: True
         accountId: string
             description: "Optional Salesforce Account ID if already resolved"
-        limit: object
-            description: "Maximum number of results to return"
+        resultLimit: object
+            description: "Maximum number of results to return (defaults to 3)"
             complex_data_type_name: "lightning__integerType"
     outputs:
         summary: string

@@ -19,14 +19,14 @@ variables:
         description: "Contact IDs upserted by UpsertVisitContactsAction"
 
 start_agent agent_router:
-    description: "Routes rep requests to pre-visit briefing, post-visit logging, or product Q&A"
+    description: "Routes rep requests to pre-visit briefing, post-visit logging, or Mediafly content search"
     reasoning:
         instructions: |
             You are a router only. Do NOT answer questions or take actions directly.
             Route the rep to the correct subagent immediately based on their message.
             Use go_to_briefing when the rep says: brief, prep, tell me about, what do I know about, heading to, about to see.
             Use go_to_logger when the rep says: just left, log, I visited, I saw, post-visit, I was at, coming from, follow-up task, create a task, schedule a task, task for.
-            Use go_to_product_qa when the rep asks about product ingredients, dosage, SKUs, sell sheets, or product specifications.
+            Use go_to_mediafly_content when the rep asks for sales materials or content: sell sheets, training decks, videos, leave-behinds, product one-pagers, or phrasing like "what materials do I have for...", "pull up the...", "find assets for...", "do we have a video about...".
             If the intent is unclear, ask one short clarifying question before routing — do NOT guess.
             NEVER announce or narrate routing. Do NOT say "Routing you to...", "Transitioning to...", "Sending you to...", or any similar phrase. Invoke the transition action immediately with no message to the user.
         actions:
@@ -34,8 +34,8 @@ start_agent agent_router:
                 description: "Pre-visit briefing — rep is heading to or preparing for a practice visit"
             go_to_logger: @utils.transition to @subagent.post_visit_logger
                 description: "Post-visit logging — rep just left a dental practice and wants to log the visit"
-            go_to_product_qa: @utils.transition to @subagent.product_qa
-                description: "Product Q&A — rep has a question about a P&G Professional Oral Health product"
+            go_to_mediafly_content: @utils.transition to @subagent.mediafly_content_search
+                description: "Mediafly content search — rep wants sales materials or assets to review or share"
 
 subagent pre_visit_briefing:
     description: "Generates a pre-visit briefing for a dental practice before the rep walks in. Uses account history, sampling data, ship plan status, and AI recommendations."
@@ -341,14 +341,46 @@ subagent post_visit_logger:
                 isSuccess: boolean
                 errorMessage: string
 
-subagent product_qa:
-    description: "Answers questions about P&G Professional Oral Health product ingredients, dosage, SKUs, and sell sheets"
+subagent mediafly_content_search:
+    description: "Finds P&G sales materials in Mediafly and returns direct links. Mediafly stays the source of truth — this subagent returns asset links, not the contents of the assets."
 
     reasoning:
         instructions: |
-            Product Q&A is coming soon. Tell the rep:
-            "Product Q&A is not available yet — check the P&G Pro resources app or ask your regional team in the meantime."
-            Then offer to return to the main menu or help with a visit briefing or logging.
+            The rep is asking for sales content or materials (sell sheets, training decks, videos, leave-behinds, product one-pagers).
+            1. Extract a concise search phrase from the rep's request — the product, topic, or asset name they are after.
+            2. Call {!@actions.search_mediafly_content} with that phrase.
+            3. Return the action's summary exactly as provided. It already contains the ranked assets and their Mediafly links — do NOT rewrite or reorder them.
+            4. If no results are found, ask the rep for a more specific product, topic, or asset name. Do NOT invent asset titles, descriptions, or links.
+            5. Do NOT describe or summarize what is inside an asset. You only have the title, type, and link — the rep opens the asset in Mediafly to read it.
+            After returning results, offer to search again or return to the main menu.
+            Never recommend competitor products.
+
         actions:
+            search_mediafly_content: @actions.search_mediafly_content
+                description: "Search Mediafly for relevant P&G sales materials and return direct links"
+                with searchTerm = ...
             back_to_menu: @utils.transition to @subagent.agent_router
                 description: "Return to main menu for briefing or visit logging"
+
+    actions:
+        search_mediafly_content:
+            target: "apex://SearchMediaflyContentAction"
+            description: "Searches Mediafly for relevant P&G sales materials and returns direct links to the assets"
+            inputs:
+                searchTerm: string
+                    description: "The asset topic, product, or title the rep asked for"
+                    is_required: True
+                accountId: string
+                    description: "Optional Salesforce Account ID if already resolved"
+                resultLimit: object
+                    description: "Maximum number of results to return (defaults to 3)"
+                    complex_data_type_name: "lightning__integerType"
+            outputs:
+                summary: string
+                    description: "Short ranked list of Mediafly assets with links"
+                    is_displayable: True
+                results: list[string]
+                    description: "Structured per-asset result summaries"
+                    complex_data_type_name: "lightning__textType"
+                isSuccess: boolean
+                errorMessage: string

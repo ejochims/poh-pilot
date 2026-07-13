@@ -5,7 +5,9 @@ This repo contains the Apex classes, Prompt Template, and Agent Script source th
 - **Pre-visit briefing** — the rep asks to be briefed on a dental practice before walking in; the agent returns a grounded 6-section narrative with no hallucination risk
 - **Post-visit logging** — the rep dictates a paragraph after leaving a practice; the agent resolves the account, logs the Event, links attendees, updates Account intelligence, and creates follow-up Tasks in one conversational turn
 
-A third flow (Product Q&A) is stubbed and ready to wire. For a phase-two content-search option, see `specs/Mediafly-Agent-Action-Walkthrough.md`, which describes how to connect Mediafly's Launchpad API to a separate Agentforce action that returns direct links to sales assets without duplicating content in Salesforce.
+A third flow (**Mediafly content search**) is included as a Level 1 reference implementation: the rep asks for sales materials and the agent searches Mediafly's Launchpad API and returns direct links to the matching assets, with Mediafly staying the single source of truth (no content duplicated into Salesforce). See `specs/Mediafly-Agent-Action-Walkthrough.md` for the full walkthrough, including the **authentication decision** used — a single dedicated Mediafly service-account identity, chosen because the public Mediafly API supports no OAuth/delegated per-rep token flow — the API constraint that keeps this at "find & link" rather than answering from inside assets, and the open questions to confirm with Mediafly.
+
+> The Mediafly content-search action calls out to Mediafly and requires credentials, a `productId`, and a Company Code that must be provisioned by Mediafly. The reference classes ship with placeholders and `TODO` markers; they are meant to be adapted in your org, not deployed as-is.
 
 ---
 
@@ -47,7 +49,9 @@ agent_router (start_agent)
     │         ├── create_follow_up (apex://CreateFollowUpTaskAction)
     │         └── link_attendees (apex://LinkVisitAttendeesAction)
     │
-    └──► product_qa (stub)
+    └──► mediafly_content_search
+              │
+              └── search_mediafly_content (apex://SearchMediaflyContentAction)
 ```
 
 **Key architectural points:**
