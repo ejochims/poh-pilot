@@ -44,20 +44,28 @@ Copy these four files from this repo into your SFDX project (e.g. `force-app/mai
 You will create **two** Named Credentials. The service-account username/password live here, never in Apex.
 
 **3a. Accounts (token) credential — `Mediafly_Accounts`**
+
+This credential holds the service-account login used to fetch the token. The exact auth setup depends on what Mediafly confirms in Phase 1 #6, but the recommended pattern in the current Named Credential model is:
+
 1. Setup → Named Credentials → **External Credentials** → New.
    - Label / Name: `Mediafly_Accounts`
-   - Authentication Protocol: **Basic Authentication** (Custom, if your token call needs Basic; confirm against Mediafly docs from Phase 1 #6).
-2. Add a **Principal** and enter the service-account **username** and **password** from Phase 1 #1.
+   - Authentication Protocol: **Custom** (the new model has no built-in "Basic" protocol; you build the auth header yourself).
+2. Under **Principals**, add a Named Principal (e.g. `Mediafly_Service_Account`) and store the service-account **username** and **password** from Phase 1 #1 as protected **Custom Headers / Parameters** on that principal (they are stored encrypted, never in code).
+   - If Mediafly's token call expects HTTP Basic auth, add a Custom Header on the External Credential named `Authorization` with value `Basic <base64(username:password)>` (or the equivalent credential merge field). Confirm the exact shape against Phase 1 #6.
 3. Setup → Named Credentials → **Named Credentials** → New.
    - Label / Name: **`Mediafly_Accounts`** (must match exactly — the code calls `callout:Mediafly_Accounts`)
-   - URL: the Accounts API base URL from Phase 1 #4
-   - Link it to the External Credential above.
+   - URL: the Accounts API base URL from Phase 1 #4 — must be **HTTPS**.
+   - Link it to the External Credential above, and enable "Allow Formulas in HTTP Header" if you used a header merge field.
 
 **3b. Launchpad (search) credential — `Mediafly_Launchpad`**
 4. Create a Named Credential named **`Mediafly_Launchpad`** (the code calls `callout:Mediafly_Launchpad`).
    - URL: the Launchpad base URL from Phase 1 #5 — must be **HTTPS**.
    - The code attaches the Bearer token itself, so this credential does not need its own auth principal (set "No Authentication" / anonymous).
    - **Turn OFF "Generate Authorization Header"** on this Named Credential so the code's manual `Authorization: Bearer <token>` header is honored and Salesforce does not generate a conflicting one.
+
+**3c. Grant Principal Access on a permission set (do NOT skip — callouts fail without it)**
+5. On the permission set you use for this integration (the same one from Phase 7): Setup → Permission Sets → your set → **External Credential Principal Access** → **Add** the `Mediafly_Accounts` principal from step 2.
+   - Without this, callouts fail at runtime with an "unauthorized / no access to named credential" style error even though everything else is configured correctly. This is the most commonly missed step.
 
 > Names must match exactly: `Mediafly_Accounts` and `Mediafly_Launchpad`. The Apex references them as `callout:Mediafly_Accounts` and `callout:Mediafly_Launchpad`. Both URLs must be HTTPS. Because the endpoint host comes only from the Named Credential (the search term is a URL-encoded query param), the bearer token can never be sent to a host other than Mediafly.
 
@@ -101,10 +109,25 @@ The ~1-hour token is cached and reused across reps. Without this, the code still
 
 ## Phase 7 — Wire the agent + grant access
 
-1. Import / merge the `mediafly_content_search` subagent and the router's `go_to_mediafly_content` transition from `agent/PG_SalesCompanion.agent` into your agent.
+1. Bring the `mediafly_content_search` subagent and the router's `go_to_mediafly_content` transition from `agent/PG_SalesCompanion.agent` into your agent. `PG_SalesCompanion.agent` is an Agent Script file — recreate the subagent in Agentforce Builder, or merge the snippet into your own agent's script/metadata. (The router already had a `go_to_product_qa` transition; this replaces it.)
 2. Confirm the action target resolves: `search_mediafly_content` → `apex://SearchMediaflyContentAction`.
-3. Grant the agent's running user (and any test users) **Apex class access** to `SearchMediaflyContentAction`, `MediaflyAuthService`, and `MediaflyConfig` via a permission set.
+3. On the permission set from Phase 3c, also grant **Apex class access** to `SearchMediaflyContentAction`, `MediaflyAuthService`, and `MediaflyConfig`, and assign that permission set to the agent's running user and any test users.
 4. Deploy everything and activate the agent version.
+
+---
+
+## Phase 7.5 — Smoke-test the callout first (recommended)
+
+Before touching the agent, confirm auth + search work in isolation. This separates credential problems from agent-wiring problems. Run in Setup → Developer Console → **Execute Anonymous**:
+
+```apex
+SearchMediaflyContentAction.Request r = new SearchMediaflyContentAction.Request();
+r.searchTerm = 'Oral-B iO';
+System.debug(SearchMediaflyContentAction.search(new List<SearchMediaflyContentAction.Request>{ r })[0].summary);
+```
+
+- If you get a ranked list of assets, credentials and config are correct — move on to the agent.
+- If you get an auth error, revisit Phase 3 (especially the Principal Access in 3c and the token TODOs in Phase 5) before blaming the agent.
 
 ---
 
@@ -131,6 +154,7 @@ Do we have a video I can share about iO patient outcomes?
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
+| Callout fails immediately with "unauthorized" / no access to the named credential | Permission set is missing External Credential Principal Access | Add the `Mediafly_Accounts` principal on the permission set (Phase 3c) and assign it to the running user |
 | "Unable to authenticate with Mediafly" | Wrong token path/field, or bad service-account creds | Recheck Phase 5 TODOs and the `Mediafly_Accounts` principal |
 | "I could not reach Mediafly just now" (non-401) | Wrong Launchpad URL, missing `productId`, or callout not allowed | Verify `Mediafly_Launchpad` URL + `Product_Id__c`; confirm the org allows the callout |
 | Every search returns no results | `productId` wrong, or service account lacks content permissions | Confirm Phase 1 #3 and the service account's library access |
