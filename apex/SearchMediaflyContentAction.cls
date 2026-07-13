@@ -13,7 +13,7 @@
  * reason over the text inside PDFs, decks, or videos — the Launchpad search API
  * does not expose document contents (results are ItemModel objects carrying a
  * free-form `metadata` dictionary plus `link.href`, not extracted text). See
- * specs/Mediafly-Agent-Action-Walkthrough.md for the Level 2 (in-asset Q&A)
+ * Mediafly-Agent-Action-Walkthrough.md for the Level 2 (in-asset Q&A)
  * discussion and why it is out of scope.
  *
  * Auth: uses MediaflyAuthService for the cached service-account bearer token.

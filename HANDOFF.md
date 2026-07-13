@@ -4,8 +4,8 @@ This repo is a **reference kit** for the P&G Professional Oral Health Agentforce
 
 ## Start here
 
-1. **`specs/Mediafly-Setup-Guide.md`** — the step-by-step runbook. Begin at **Phase 1**; it lists exactly what to request from Mediafly. **Do not skip Phase 3c** (External Credential Principal Access) — it is the most common reason callouts fail.
-2. **`specs/Mediafly-Agent-Action-Walkthrough.md`** — the design rationale, API details, and the authentication decision (single service-account identity, and why).
+1. **`Mediafly-Setup-Guide.md`** — the step-by-step runbook. Begin at **Phase 1**; it lists exactly what to request from Mediafly. **Do not skip Phase 3c** (External Credential Principal Access) — it is the most common reason callouts fail.
+2. **`Mediafly-Agent-Action-Walkthrough.md`** — the design rationale, API details, and the authentication decision (single service-account identity, and why).
 3. **`README.md`** — overview of the whole agent (pre-visit briefing, post-visit logging, and the Mediafly content search).
 
 ## What the Mediafly integration does (and does not)

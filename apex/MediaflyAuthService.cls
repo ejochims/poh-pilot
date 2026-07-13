@@ -13,7 +13,7 @@
  * Mediafly's public API exposes no OAuth / delegated / on-behalf-of flow, so
  * this integration authenticates as a single dedicated Mediafly *user* (a
  * "service account"). All rep searches run under that one identity. See
- * specs/Mediafly-Agent-Action-Walkthrough.md for the full rationale and
+ * Mediafly-Agent-Action-Walkthrough.md for the full rationale and
  * trade-offs.
  *
  * SECURITY:
