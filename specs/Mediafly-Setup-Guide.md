@@ -55,10 +55,11 @@ You will create **two** Named Credentials. The service-account username/password
 
 **3b. Launchpad (search) credential — `Mediafly_Launchpad`**
 4. Create a Named Credential named **`Mediafly_Launchpad`** (the code calls `callout:Mediafly_Launchpad`).
-   - URL: the Launchpad base URL from Phase 1 #5
-   - The code attaches the Bearer token itself, so this credential does not need its own auth principal (set "No Authentication" / anonymous, allowing the code to set the `Authorization` header).
+   - URL: the Launchpad base URL from Phase 1 #5 — must be **HTTPS**.
+   - The code attaches the Bearer token itself, so this credential does not need its own auth principal (set "No Authentication" / anonymous).
+   - **Turn OFF "Generate Authorization Header"** on this Named Credential so the code's manual `Authorization: Bearer <token>` header is honored and Salesforce does not generate a conflicting one.
 
-> Names must match exactly: `Mediafly_Accounts` and `Mediafly_Launchpad`. The Apex references them as `callout:Mediafly_Accounts` and `callout:Mediafly_Launchpad`.
+> Names must match exactly: `Mediafly_Accounts` and `Mediafly_Launchpad`. The Apex references them as `callout:Mediafly_Accounts` and `callout:Mediafly_Launchpad`. Both URLs must be HTTPS. Because the endpoint host comes only from the Named Credential (the search term is a URL-encoded query param), the bearer token can never be sent to a host other than Mediafly.
 
 ---
 
@@ -138,7 +139,19 @@ Do we have a video I can share about iO patient outcomes?
 
 ---
 
-## Security checklist (before you commit anything)
+## Security hardening
 
-- No service-account username/password, token, `productId`, or Company Code in Apex, the agent script, or source control — all of it lives in Named Credentials and `Mediafly_Config__mdt`.
+The reference implementation already follows the core Salesforce security practices: secrets live only in Named/External Credentials and `Mediafly_Config__mdt` (never in code or source control); the rep's search term is URL-encoded before it reaches the callout; the bearer token can only be sent to the Mediafly host (the endpoint host comes from the Named Credential, not from user input); errors returned to the rep never contain tokens, exceptions, or HTTP bodies; and debug logs never write the token or response body. Classes are `with sharing`, the token is short-lived, and a rejected token triggers a single refresh-and-retry.
+
+Confirm or tighten the following before go-live:
+
+1. **Least privilege on the Mediafly service account (most important).** All rep searches run under one Mediafly identity, so every rep effectively sees everything that account can see. Ask Mediafly to scope the service account to only the content appropriate for all pilot reps. This authorization boundary lives on the Mediafly side, not in Salesforce.
+2. **Cached-token visibility.** The ~1-hour token is stored in an Org Platform Cache partition, which any Apex in the org can read. This is an accepted trade-off for a read-only content-library token with a short TTL. If the content is sensitive, tighten it: shorten the TTL, or remove Org caching and re-authenticate per call (slower, but the token never persists).
+3. **Named Credential settings.** Both credentials must be HTTPS. On `Mediafly_Launchpad`, "Generate Authorization Header" must be OFF (see Phase 3). Do not add a Remote Site Setting that broadens allowed callout hosts beyond Mediafly.
+4. **Credential rotation.** The service-account password is long-lived and powerful. Agree a rotation cadence with the P&G/Mediafly admins; rotate it in the External Credential principal (no code change needed).
+5. **Search-term governance.** The rep's typed search phrase is sent to Mediafly. It is the only data that leaves the org. If P&G is strict about data egress, advise reps not to type patient or personal information into searches.
+
+## Pre-commit check
+
+- No service-account username/password, token, `productId`, or Company Code in Apex, the agent script, or source control.
 - The action never returns raw tokens, exceptions, or HTTP bodies to the rep.
