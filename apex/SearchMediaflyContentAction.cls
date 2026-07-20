@@ -200,7 +200,7 @@ public with sharing class SearchMediaflyContentAction {
     }
 
     public class Request {
-        @InvocableVariable(label='Search Term' description='The product, topic, or asset name the rep asked for.' required=true)
+        @InvocableVariable(label='Search Term' description='Clean keyword phrase (product, topic, or asset name) to search Mediafly for. Mediafly searches this phrase as submitted, so pass keywords, not the rep\'s full question, and no wildcard characters.' required=true)
         public String searchTerm;
 
         @InvocableVariable(label='Account ID' description='Optional Salesforce Account Id if already resolved. Reserved for account-aware search in a later phase.')

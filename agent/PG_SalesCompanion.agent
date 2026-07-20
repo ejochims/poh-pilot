@@ -347,8 +347,8 @@ subagent mediafly_content_search:
     reasoning:
         instructions: |
             The rep is asking for sales content or materials (sell sheets, training decks, videos, leave-behinds, product one-pagers).
-            1. Extract a concise search phrase from the rep's request — the product, topic, or asset name they are after.
-            2. Call {!@actions.search_mediafly_content} with that phrase.
+            1. Extract a concise KEYWORD search phrase from the rep's request — the product, topic, or asset name they are after. Mediafly searches the phrase exactly as you send it (ranked semantic/fuzzy matching plus partial-word matching), so send clean keywords, NOT the rep's full sentence or question. Strip filler and question words ("what materials do I have for", "pull up the", "can you find", "do we have a"), keep the product/topic/asset terms (e.g. send "Oral-B iO hygienist training", not "what materials do I have for Oral-B iO hygienist training?"), and never add wildcard characters such as * or ? — they are not supported.
+            2. Call {!@actions.search_mediafly_content} with that keyword phrase.
             3. Return the action's summary exactly as provided. It already contains the ranked assets and their Mediafly links — do NOT rewrite or reorder them.
             4. If no results are found, ask the rep for a more specific product, topic, or asset name. Do NOT invent asset titles, descriptions, or links.
             5. Do NOT describe or summarize what is inside an asset. You only have the title, type, and link — the rep opens the asset in Mediafly to read it.
@@ -368,7 +368,7 @@ subagent mediafly_content_search:
             description: "Searches Mediafly for relevant P&G sales materials and returns direct links to the assets"
             inputs:
                 searchTerm: string
-                    description: "The asset topic, product, or title the rep asked for"
+                    description: "Clean keyword phrase (asset topic, product, or title) — Mediafly searches it as submitted, so pass keywords, not the rep's full question, and no wildcards"
                     is_required: True
                 accountId: string
                     description: "Optional Salesforce Account ID if already resolved"

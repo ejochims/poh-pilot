@@ -24,7 +24,7 @@ Request these from your Mediafly rep before you start. You cannot finish without
 | 6 | The exact **token endpoint path** and the **token field name** in the response | Two `TODO`s in `MediaflyAuthService.cls` (Phase 5) |
 | 7 | Confirmation of **direct-link behavior** — do reps need to be logged into Mediafly for links to open? | Informs the rep experience; no code change |
 
-> Two open auth questions worth asking at the same time (see the walkthrough spec): (a) does Mediafly offer an enterprise OAuth / delegated-token option beyond the public docs, and (b) does P&G need per-rep content scoping? If "same content library for everyone" is fine, the service-account model in this guide is correct as-is.
+> **Auth model (confirmed by Mediafly, July 2026):** the public API authorizes at the **service-account level, not per user**, so search results reflect the integration account's access. Viewer links stay permission-enforced on open (the rep is prompted to log in and only sees assets they can access). Per-user, permission-scoped *search* is only available via Mediafly's **MCP + OAuth** route (the recommended production path — see the walkthrough). For a pilot where every rep should see the same POH content library, the service-account model in this guide is correct as-is. The only open item is a P&G product decision: is per-rep content scoping required for the pilot?
 
 ---
 
@@ -88,7 +88,7 @@ This credential holds the service-account login used to fetch the token. The exa
 
 ## Phase 5 — Confirm the two token TODOs
 
-Open `MediaflyAuthService.cls` and resolve the two `TODO` markers using the Mediafly docs from Phase 1 #6:
+Open `MediaflyAuthService.cls` and resolve the two `TODO` markers using the Mediafly Accounts API docs (<https://devdocs.mediafly.com/accounts/>) and the values from Phase 1 #6:
 
 1. **Token endpoint path** — line with `req.setEndpoint(ACCOUNTS_NAMED_CREDENTIAL + '/tokens');`. Change `/tokens` to the real Accounts API token path if different.
 2. **Token field name** — line with `String token = (String) body.get('accessToken');`. Change `accessToken` to whatever field name the Accounts API returns the token in.

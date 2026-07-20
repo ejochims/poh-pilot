@@ -2,6 +2,8 @@
 
 This repo is a **reference kit** for the P&G Professional Oral Health Agentforce build, including a Level 1 **Mediafly content search** you can adapt into your own org. It is not a deployable SFDX package — copy the pieces you need.
 
+> **Mediafly reviewed this and confirmed the approach (July 2026).** `GET /items/search` with `IsAISearch=true` is the right endpoint; viewer links stay permission-enforced on open; and the public API authorizes at the **service-account level, not per user** (search results reflect the integration account's access). Mediafly's recommendation: use the **API route for a live July 27 demo**, and adopt **MCP + OAuth as the production path** for per-user permission-scoped search. This kit implements the API route now and documents the MCP + OAuth roadmap in the walkthrough.
+
 ## Start here
 
 1. **`Mediafly-Setup-Guide.md`** — the step-by-step runbook. Begin at **Phase 1**; it lists exactly what to request from Mediafly. **Do not skip Phase 3c** (External Credential Principal Access) — it is the most common reason callouts fail.

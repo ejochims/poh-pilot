@@ -57,6 +57,11 @@ Do not commit the service-account username, password, token, `productId`, tenant
 
 ## Mediafly API Notes
 
+> **Confirmed by Mediafly (July 2026).** After reviewing this reference implementation, the Mediafly team confirmed that `GET /items/search` with `IsAISearch=true` is the correct search endpoint for this use case. Their reference docs for the API path:
+> - Accounts API auth: <https://devdocs.mediafly.com/accounts/>
+> - Launchpad API overview: <https://devdocs.mediafly.com/launchpad/>
+> - Launchpad Swagger: <https://launchpadapi.mediafly.com/swagger/index.html>
+
 The public Launchpad OpenAPI definition describes Launchpad as Mediafly's content storage service.
 
 For Level 1 search, the relevant endpoint is:
@@ -69,10 +74,20 @@ Use `version = 3` unless Mediafly instructs otherwise.
 
 The endpoint requires `productId` as a query parameter. The public spec exposes two search shapes:
 
-- `GET /{version}/items/search` with query parameters such as `Term`, `Limit`, `IsAISearch`, and `productId`.
+- `GET /{version}/items/search` with query parameters such as `Term`, `Limit`, `IsAISearch`, and `productId`. **This is the shape Mediafly confirmed and the one this repo implements.**
 - `POST /{version}/items/search` with a `SearchRequest` JSON body and `productId` as a query parameter.
 
-For a simple Agentforce action, start with `GET`. If P&G needs richer filters later, move to `POST` with a `SearchRequest` body.
+For a simple Agentforce action, start with `GET` (Mediafly's recommendation). If P&G needs richer filters later, move to `POST` with a `SearchRequest` body.
+
+### Search-term behavior (important for the agent)
+
+Mediafly confirmed how the search endpoint interprets the query, and it shapes how the agent must call the action:
+
+- `IsAISearch=true` gives **ranked semantic / fuzzy matching** and **partial-word matches**.
+- It does **not** support **wildcard token behavior** (no `*` / `?` operators).
+- It **processes the query as submitted** — it does *not* translate a natural-language question into cleaned search terms.
+
+Implication: the `mediafly_content_search` subagent must extract a **clean keyword phrase** (product, topic, or asset name) before calling the action, rather than passing the rep's full question. For example, send `Oral-B iO hygienist training`, not `what materials do I have for Oral-B iO hygienist training?`. The subagent reasoning instructions in `agent/PG_SalesCompanion.agent` enforce this.
 
 Useful search parameters:
 
@@ -134,10 +149,26 @@ This is a deliberate choice, not just a default. Confirming P&G's preferred auth
 - All rep searches run under one Mediafly identity, so results reflect that account's content permissions, and Mediafly attributes all API search/engagement analytics to the service account (no per-rep attribution on the API side).
 - The per-rep layer still exists at the click, not the query: when the rep taps a returned `link.href`, the asset opens under the rep's own Mediafly app/browser session (the interactive SSO surface), so content access on open can remain rep-scoped.
 
-**Open questions to confirm with Mediafly when possible (non-blocking for Level 1):**
+**Confirmed by Mediafly (July 2026):**
 
-- Does Mediafly offer an enterprise OAuth or delegated-token option beyond the public docs that would allow rep-scoped tokens? If so, per-rep search becomes possible.
-- Does P&G actually require per-rep content scoping or per-rep engagement attribution? If every pilot rep should see the same POH content library, the service-account model is the correct, simpler choice rather than a limitation.
+Mediafly reviewed this approach and confirmed the trade-off directly:
+
+- The public API authenticates and authorizes at the **calling application / service-account level, not the individual end-user level**. Search results reflect the integration account's access, not the specific rep's. This is a known limitation of the API path — acceptable for a pilot depending on the demo goal, but Mediafly does **not** recommend treating it as a solved permission model for production.
+- **Viewer links remain permission-enforced when opened**: the rep is prompted to log in if needed, and the asset only opens if that specific user has access. So the per-user boundary still holds at the click, as we designed — it just does not apply to the search results themselves.
+- **Per-user, permission-scoped search is not available on the public API path.** The governed way to get rep-scoped results is Mediafly's **MCP + OAuth** route (see roadmap below), which Mediafly recommends as the long-term production architecture.
+
+**Still worth confirming with P&G (product decision, not technical):**
+
+- Does P&G actually require per-rep content scoping or per-rep engagement attribution for the pilot? If every pilot rep should see the same POH content library, the service-account model is the correct, simpler choice for the July 27 demo rather than a limitation.
+
+## Mediafly's Recommendation and Roadmap
+
+Mediafly framed the choice as two routes with a clear trade-off:
+
+- **API route (this implementation):** most likely to produce a **live, in-environment Agentforce demo** by July 27 — a rep asks for content in Agentforce, Agentforce calls Mediafly's API, and the chat returns Mediafly links/results live in the workflow. Carries the known service-account permission-scoping limitation above.
+- **MCP + OAuth route (production target):** the **governed end-state** — a rep asks for content in an Agentforce chat experience, Mediafly's MCP is called, and results come back **permission-aware** with deep links. Better long-term architecture, but higher setup risk before the meeting because the Agentforce-specific registration/auth wiring is not yet validated end to end.
+
+Mediafly's guidance: use the July 27 kickoff to show real momentum with the API route, and align on **MCP + OAuth as the production path**. This repo intentionally implements the API route for the demo while documenting MCP + OAuth as the next step. Nothing in the Level 1 code is wasted: the subagent, action contract, keyword-extraction behavior, and Agentforce wiring carry forward; the MCP route primarily swaps the auth surface and the transport to Mediafly for per-user scoping.
 
 ## Salesforce Configuration Pattern
 
